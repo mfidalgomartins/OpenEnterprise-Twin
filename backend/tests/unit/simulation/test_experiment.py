@@ -1,8 +1,12 @@
+from datetime import datetime
+
 import pytest
 
 from openenterprise_twin.domain.errors import InvariantViolation
+from openenterprise_twin.simulation.engine import simulate_trace
 from openenterprise_twin.simulation.experiment import (
     ExperimentRequest,
+    experiment_content_digest,
     run_experiment,
     validate_experiment_result,
 )
@@ -10,6 +14,7 @@ from openenterprise_twin.simulation.reference import (
     build_baseline_scenario,
     build_northstar_company,
 )
+from openenterprise_twin.simulation.shocks import build_shock_tape
 
 REQUIRED_METRICS = {
     "revenue",
@@ -43,6 +48,10 @@ def test_experiment_exposes_required_distributions_and_replications() -> None:
     assert result.company_model_version == "0.1.0"
     assert len(result.resolved_assumptions_hash) == 64
     assert len(result.digest) == 64
+    assert isinstance(result.created_at, datetime)
+    assert result.created_at.tzinfo is not None
+    assert result.duration_seconds >= 0
+    assert result.plugin_versions
     assert [item.replication_id for item in result.replications] == list(range(8))
     assert all(len(item.trace_digest) == 64 for item in result.replications)
     for distribution in result.metrics.values():
@@ -56,7 +65,12 @@ def test_experiment_exposes_required_distributions_and_replications() -> None:
 def test_experiment_is_reproducible() -> None:
     request = build_request()
 
-    assert run_experiment(request) == run_experiment(request)
+    first = run_experiment(request)
+    second = run_experiment(request)
+
+    assert first.replications == second.replications
+    assert first.metric_results == second.metric_results
+    assert first.resolved_assumptions_hash == second.resolved_assumptions_hash
 
 
 def test_experiment_digest_detects_tampered_provenance() -> None:
@@ -67,11 +81,36 @@ def test_experiment_digest_detects_tampered_provenance() -> None:
         validate_experiment_result(tampered)
 
 
+def test_validation_recomputes_distributions_from_replication_values() -> None:
+    result = run_experiment(build_request())
+    first = result.replications[0]
+    changed_entries = tuple(
+        (name, value + 1.0 if name == "revenue" else value)
+        for name, value in first.metric_entries
+    )
+    changed_replication = first.model_copy(
+        update={"metric_entries": changed_entries}
+    )
+    tampered = result.model_copy(
+        update={
+            "replications": (changed_replication, *result.replications[1:]),
+        }
+    )
+    tampered = tampered.model_copy(
+        update={"digest": experiment_content_digest(tampered)}
+    )
+
+    with pytest.raises(InvariantViolation, match="experiment_distribution"):
+        validate_experiment_result(tampered)
+
+
 def test_serial_and_bounded_parallel_execution_are_identical() -> None:
     serial = run_experiment(build_request(max_workers=1))
     parallel = run_experiment(build_request(max_workers=2))
 
-    assert serial == parallel
+    assert serial.replications == parallel.replications
+    assert serial.metric_results == parallel.metric_results
+    assert serial.resolved_assumptions_hash == parallel.resolved_assumptions_hash
 
 
 def test_rescue_funding_probability_is_observed_for_infeasible_cash_plan() -> None:
@@ -103,3 +142,40 @@ def test_rescue_funding_probability_is_observed_for_infeasible_cash_plan() -> No
 
     assert result.metrics["rescue_funding"].breach_probability == 1.0
     assert result.metrics["rescue_funding"].mean > 0
+    assert result.metrics["closing_cash"].breach_probability == 1.0
+
+
+def test_free_cash_flow_includes_capital_investment_charged_during_warmup() -> None:
+    company = build_northstar_company()
+    baseline = build_baseline_scenario()
+    scenario = baseline.model_copy(
+        update={
+            "policy_levers": baseline.policy_levers.model_copy(
+                update={"one_off_capital_investment_cents": 10_000_000}
+            )
+        }
+    )
+    tape = build_shock_tape(company, scenario, seed=20260716, replication_id=0)
+    trace = simulate_trace(
+        company, scenario, tape, allow_rescue_funding=True
+    )
+    evaluation = [period for period in trace.periods if period.phase == "evaluation"]
+    expected = sum(
+        period.collections_cents
+        - period.supplier_payments_cents
+        - period.conversion_cost_cents
+        - period.overtime_cost_cents
+        - period.fixed_cost_cents
+        - period.interest_paid_cents
+        for period in evaluation
+    ) - sum(period.capital_investment_cents for period in trace.periods)
+    result = run_experiment(
+        ExperimentRequest(
+            company=company,
+            scenario=scenario,
+            master_seed=20260716,
+            replications=1,
+        )
+    )
+
+    assert result.replications[0].metric_values["free_cash_flow"] == expected

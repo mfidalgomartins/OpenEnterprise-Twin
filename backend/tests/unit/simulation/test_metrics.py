@@ -43,9 +43,9 @@ def test_breach_probability_is_strict_and_excludes_guardrail_equality(
 
 @pytest.mark.parametrize(
     ("downside_tail", "expected_cvar95"),
-    [("lower", 0.5), ("upper", 19.5)],
+    [("lower", 1 / 21), ("upper", 20 - 1 / 21)],
 )
-def test_cvar95_averages_the_worst_five_percent_with_finite_sample_ceiling(
+def test_cvar95_fractionally_weights_the_empirical_five_percent_tail(
     downside_tail: Literal["lower", "upper"], expected_cvar95: float
 ) -> None:
     result = summarize_distribution(

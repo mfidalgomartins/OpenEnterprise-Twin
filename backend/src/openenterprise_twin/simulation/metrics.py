@@ -44,8 +44,9 @@ def summarize_distribution(
 ) -> MetricDistribution:
     """Summarize a finite sample with strict empirical breach semantics.
 
-    CVaR95 uses the mean of the ``max(1, ceil(0.05 * n))`` worst ordered
-    observations, making the tail definition non-empty for every sample size.
+    CVaR95 integrates exactly 5% of the empirical probability mass. When the
+    boundary crosses an observation, that observation receives fractional
+    weight instead of expanding the tail beyond 5%.
     """
 
     if isinstance(guardrail, bool):
@@ -75,8 +76,15 @@ def summarize_distribution(
     )
     breaches = sample < guardrail if breach_when == "below" else sample > guardrail
     ordered = np.sort(sample)
-    tail_count = max(1, math.ceil(0.05 * sample.size))
-    tail = ordered[:tail_count] if downside_tail == "lower" else ordered[-tail_count:]
+    tail_mass = 0.05 * sample.size
+    full_count = math.floor(tail_mass)
+    fractional_weight = tail_mass - full_count
+    tail_ordered = ordered if downside_tail == "lower" else ordered[::-1]
+    weighted_sum = float(np.sum(tail_ordered[:full_count]))
+    if fractional_weight > 0.0:
+        weighted_sum += fractional_weight * float(tail_ordered[full_count])
+    if full_count == 0 and fractional_weight == 0.0:
+        raise AssertionError("a non-empty sample must have positive tail mass")
     return MetricDistribution(
         mean=float(np.mean(sample)),
         median=float(median),
@@ -86,5 +94,5 @@ def summarize_distribution(
         p95=float(p95),
         standard_deviation=float(np.std(sample, ddof=0)),
         breach_probability=float(np.count_nonzero(breaches) / sample.size),
-        cvar95=float(np.mean(tail)),
+        cvar95=weighted_sum / tail_mass,
     )

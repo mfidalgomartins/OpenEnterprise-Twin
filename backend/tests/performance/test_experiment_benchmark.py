@@ -1,4 +1,5 @@
 import os
+from time import perf_counter
 
 import pytest
 
@@ -23,7 +24,9 @@ def test_one_thousand_full_horizon_replications_are_valid() -> None:
         max_workers=min(24, os.cpu_count() or 1),
     )
 
+    started_at = perf_counter()
     result = run_experiment(request)
+    elapsed_seconds = perf_counter() - started_at
 
     validate_experiment_result(result)
     assert result.replication_count == 1_000
@@ -32,3 +35,9 @@ def test_one_thousand_full_horizon_replications_are_valid() -> None:
         len(replication.trace_digest) == 64
         for replication in result.replications
     )
+    assert all(
+        distribution.standard_deviation >= 0
+        for distribution in result.metrics.values()
+    )
+    assert elapsed_seconds > 0
+    print(f"benchmark_elapsed_seconds={elapsed_seconds:.3f}")

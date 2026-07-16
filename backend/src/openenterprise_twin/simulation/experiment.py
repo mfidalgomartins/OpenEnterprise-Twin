@@ -3,7 +3,9 @@
 import json
 from collections.abc import Mapping
 from concurrent.futures import ProcessPoolExecutor
+from datetime import UTC, datetime
 from hashlib import sha256
+from time import perf_counter
 from types import MappingProxyType
 from typing import Annotated, Literal, Self
 
@@ -44,6 +46,10 @@ BreachDirection = Literal["below", "above"]
 DownsideTail = Literal["lower", "upper"]
 NonNegativeInt = Annotated[int, Field(ge=0)]
 FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
+PluginIdentifier = Annotated[
+    str,
+    Field(min_length=1, max_length=128, pattern=r"^[a-z0-9][a-z0-9.-]*$"),
+]
 
 METRIC_NAMES: tuple[MetricName, ...] = (
     "revenue",
@@ -68,6 +74,13 @@ class MetricGuardrail(DomainModel):
     downside_tail: DownsideTail
 
 
+class PluginVersion(DomainModel):
+    """Plugin identity retained in experiment provenance."""
+
+    plugin_id: PluginIdentifier
+    version: VersionString
+
+
 class ExperimentRequest(DomainModel):
     """Validated inputs for one reproducible scenario experiment."""
 
@@ -77,12 +90,16 @@ class ExperimentRequest(DomainModel):
     replications: Annotated[int, Field(gt=0, le=10_000)]
     max_workers: Annotated[int, Field(gt=0, le=32)] = 1
     guardrails: tuple[MetricGuardrail, ...] = ()
+    plugin_versions: tuple[PluginVersion, ...] = ()
 
     @model_validator(mode="after")
     def validate_guardrails(self) -> Self:
         names = [guardrail.metric_name for guardrail in self.guardrails]
         if len(names) != len(set(names)):
             raise ValueError("experiment guardrails must target unique metrics")
+        plugin_ids = [plugin.plugin_id for plugin in self.plugin_versions]
+        if len(plugin_ids) != len(set(plugin_ids)):
+            raise ValueError("experiment plugin versions must have unique identifiers")
         validate_scenario_against_company(self.scenario, self.company)
         return self
 
@@ -113,8 +130,11 @@ class ExperimentResult(DomainModel):
     engine_version: VersionString
     shock_tape_version: VersionString
     resolved_assumptions_hash: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+    plugin_versions: tuple[PluginVersion, ...]
     master_seed: NonNegativeInt
     replication_count: Annotated[int, Field(gt=0)]
+    created_at: datetime
+    duration_seconds: Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
     guardrails: tuple[MetricGuardrail, ...]
     replications: tuple[ReplicationMetrics, ...]
     metric_results: tuple[MetricResult, ...]
@@ -130,6 +150,8 @@ class ExperimentResult(DomainModel):
 def run_experiment(request: ExperimentRequest) -> ExperimentResult:
     """Execute ordered replications and aggregate deterministic distributions."""
 
+    created_at = datetime.now(UTC)
+    started_at = perf_counter()
     tasks = tuple(
         (request.company, request.scenario, request.master_seed, replication_id)
         for replication_id in range(request.replications)
@@ -148,14 +170,10 @@ def run_experiment(request: ExperimentRequest) -> ExperimentResult:
     metric_results = tuple(
         MetricResult(
             metric_name=metric_name,
-            distribution=summarize_distribution(
-                [
-                    replication.metric_values[metric_name]
-                    for replication in replications
-                ],
-                guardrail=rules[metric_name].threshold,
-                breach_when=rules[metric_name].breach_when,
-                downside_tail=rules[metric_name].downside_tail,
+            distribution=_summarize_metric(
+                metric_name=metric_name,
+                replications=replications,
+                guardrail=rules[metric_name],
             ),
         )
         for metric_name in METRIC_NAMES
@@ -167,14 +185,17 @@ def run_experiment(request: ExperimentRequest) -> ExperimentResult:
         engine_version=ENGINE_VERSION,
         shock_tape_version=TAPE_VERSION,
         resolved_assumptions_hash=_assumptions_digest(request),
+        plugin_versions=_resolved_plugin_versions(request),
         master_seed=request.master_seed,
         replication_count=request.replications,
+        created_at=created_at,
+        duration_seconds=perf_counter() - started_at,
         guardrails=tuple(rules[name] for name in METRIC_NAMES),
         replications=replications,
         metric_results=metric_results,
         digest="0" * 64,
     )
-    result = result.model_copy(update={"digest": _experiment_digest(result)})
+    result = result.model_copy(update={"digest": experiment_content_digest(result)})
     validate_experiment_result(result)
     return result
 
@@ -182,7 +203,7 @@ def run_experiment(request: ExperimentRequest) -> ExperimentResult:
 def validate_experiment_result(result: ExperimentResult) -> None:
     """Reject tampering, incomplete replications and incompatible metric sets."""
 
-    if _experiment_digest(result) != result.digest:
+    if experiment_content_digest(result) != result.digest:
         raise InvariantViolation(
             "experiment_digest",
             "experiment content does not match its provenance digest",
@@ -209,6 +230,37 @@ def validate_experiment_result(result: ExperimentResult) -> None:
             raise InvariantViolation(
                 "experiment_metric_dimension",
                 "replication values do not match the required metric dimension",
+            )
+    if tuple(item.metric_name for item in result.guardrails) != METRIC_NAMES:
+        raise InvariantViolation(
+            "experiment_guardrail_dimension",
+            "experiment guardrails do not match the required metric dimension",
+        )
+    if result.created_at.tzinfo is None:
+        raise InvariantViolation(
+            "experiment_creation_time",
+            "experiment creation time must be timezone-aware",
+        )
+    plugin_ids = [plugin.plugin_id for plugin in result.plugin_versions]
+    if len(plugin_ids) != len(set(plugin_ids)):
+        raise InvariantViolation(
+            "experiment_plugin_versions",
+            "experiment plugin versions must have unique identifiers",
+        )
+
+    guardrails = {
+        guardrail.metric_name: guardrail for guardrail in result.guardrails
+    }
+    for metric_result in result.metric_results:
+        expected = _summarize_metric(
+            metric_name=metric_result.metric_name,
+            replications=result.replications,
+            guardrail=guardrails[metric_result.metric_name],
+        )
+        if expected != metric_result.distribution:
+            raise InvariantViolation(
+                "experiment_distribution_reconciliation",
+                f"distribution does not reconcile for '{metric_result.metric_name}'",
             )
 
 
@@ -256,9 +308,8 @@ def _trace_metric_values(trace: SimulationTrace) -> dict[MetricName, float]:
         - period.overtime_cost_cents
         - period.fixed_cost_cents
         - period.interest_paid_cents
-        - period.capital_investment_cents
         for period in evaluation
-    )
+    ) - sum(period.capital_investment_cents for period in trace.periods)
     evaluation_orders = sum(
         sum(period.new_orders_count.values()) for period in evaluation
     )
@@ -374,7 +425,7 @@ def _resolved_guardrails(
     return result
 
 
-def _experiment_digest(result: ExperimentResult) -> str:
+def experiment_content_digest(result: ExperimentResult) -> str:
     canonical = json.dumps(
         result.model_dump(mode="json", exclude={"digest"}),
         sort_keys=True,
@@ -388,8 +439,50 @@ def _assumptions_digest(request: ExperimentRequest) -> str:
         {
             "company": request.company.model_dump(mode="json"),
             "scenario": request.scenario.model_dump(mode="json"),
+            "plugin_versions": [
+                plugin.model_dump(mode="json")
+                for plugin in _resolved_plugin_versions(request)
+            ],
         },
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
     return sha256(canonical).hexdigest()
+
+
+def _resolved_plugin_versions(
+    request: ExperimentRequest,
+) -> tuple[PluginVersion, ...]:
+    core = (
+        PluginVersion(plugin_id="core.simulation", version=ENGINE_VERSION),
+        PluginVersion(plugin_id="core.metrics", version=ENGINE_VERSION),
+    )
+    return (*core, *request.plugin_versions)
+
+
+def _summarize_metric(
+    *,
+    metric_name: MetricName,
+    replications: tuple[ReplicationMetrics, ...],
+    guardrail: MetricGuardrail,
+) -> MetricDistribution:
+    values = [
+        replication.metric_values[metric_name] for replication in replications
+    ]
+    distribution = summarize_distribution(
+        values,
+        guardrail=guardrail.threshold,
+        breach_when=guardrail.breach_when,
+        downside_tail=guardrail.downside_tail,
+    )
+    if metric_name != "closing_cash":
+        return distribution
+
+    breaches = sum(
+        replication.metric_values["closing_cash"] < guardrail.threshold
+        or replication.metric_values["rescue_funding"] > 0
+        for replication in replications
+    )
+    return distribution.model_copy(
+        update={"breach_probability": breaches / len(replications)}
+    )
