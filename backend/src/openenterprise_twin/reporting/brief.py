@@ -28,6 +28,7 @@ from openenterprise_twin.simulation.experiment import (
 )
 
 DecisionStatus = Literal["adopt", "conditional", "do_not_adopt"]
+_MAX_ADOPT_BREACH_PROBABILITY = 0.0
 
 
 class Recommendation(DomainModel):
@@ -304,14 +305,23 @@ def _constraints(
             metric.candidate_breach_probability
             > metric.baseline_breach_probability
         )
+        absolute_breach_risk = (
+            metric.candidate_breach_probability
+            > _MAX_ADOPT_BREACH_PROBABILITY
+        )
         material_downside = _is_material_downside(metric)
-        if not breach_worsened and not material_downside:
+        if not absolute_breach_risk and not material_downside:
             continue
         details: list[str] = []
         if breach_worsened:
             details.append(
                 f"breach probability rises from "
                 f"{metric.baseline_breach_probability:.1%} to "
+                f"{metric.candidate_breach_probability:.1%}"
+            )
+        elif absolute_breach_risk:
+            details.append(
+                "candidate guardrail breach probability remains at "
                 f"{metric.candidate_breach_probability:.1%}"
             )
         if material_downside:

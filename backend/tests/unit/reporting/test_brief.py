@@ -75,6 +75,56 @@ def _comparison(*, liquidity_stress: bool = False) -> ScenarioComparison:
     return compare_experiments(baseline, candidate)
 
 
+def _rescue_comparison(
+    *,
+    baseline_investment_cents: int,
+    candidate_investment_cents: int,
+) -> ScenarioComparison:
+    company = build_northstar_company()
+    company = company.model_copy(
+        update={
+            "financial_policy": company.financial_policy.model_copy(
+                update={"opening_cash_cents": 5_000_000, "revolver_limit_cents": 0}
+            )
+        }
+    )
+    baseline_scenario = build_baseline_scenario(horizon_days=5)
+    baseline_scenario = baseline_scenario.model_copy(
+        update={
+            "policy_levers": PolicyLevers(
+                one_off_capital_investment_cents=baseline_investment_cents
+            )
+        }
+    )
+    candidate_scenario = baseline_scenario.model_copy(
+        update={
+            "scenario_id": "candidate-liquidity-stress",
+            "name": "Candidate liquidity stress",
+            "baseline_scenario_id": baseline_scenario.scenario_id,
+            "policy_levers": PolicyLevers(
+                one_off_capital_investment_cents=candidate_investment_cents
+            ),
+        }
+    )
+    baseline = run_experiment(
+        ExperimentRequest(
+            company=company,
+            scenario=baseline_scenario,
+            master_seed=7,
+            replications=3,
+        )
+    )
+    candidate = run_experiment(
+        ExperimentRequest(
+            company=company,
+            scenario=candidate_scenario,
+            master_seed=7,
+            replications=3,
+        )
+    )
+    return compare_experiments(baseline, candidate)
+
+
 def test_recommendation_cites_only_computed_metric_evidence() -> None:
     comparison = _comparison()
 
@@ -118,49 +168,10 @@ def test_liquidity_breach_prevents_unqualified_recommendation() -> None:
 
 
 def test_worse_rescue_mean_is_visible_when_breach_probabilities_are_saturated() -> None:
-    company = build_northstar_company()
-    company = company.model_copy(
-        update={
-            "financial_policy": company.financial_policy.model_copy(
-                update={"opening_cash_cents": 5_000_000, "revolver_limit_cents": 0}
-            )
-        }
+    comparison = _rescue_comparison(
+        baseline_investment_cents=50_000_000,
+        candidate_investment_cents=100_000_000,
     )
-    baseline_scenario = build_baseline_scenario(horizon_days=5)
-    baseline_scenario = baseline_scenario.model_copy(
-        update={
-            "policy_levers": PolicyLevers(
-                one_off_capital_investment_cents=50_000_000
-            )
-        }
-    )
-    candidate_scenario = baseline_scenario.model_copy(
-        update={
-            "scenario_id": "deeper-liquidity-stress",
-            "name": "Deeper liquidity stress",
-            "baseline_scenario_id": baseline_scenario.scenario_id,
-            "policy_levers": PolicyLevers(
-                one_off_capital_investment_cents=100_000_000
-            ),
-        }
-    )
-    baseline = run_experiment(
-        ExperimentRequest(
-            company=company,
-            scenario=baseline_scenario,
-            master_seed=7,
-            replications=3,
-        )
-    )
-    candidate = run_experiment(
-        ExperimentRequest(
-            company=company,
-            scenario=candidate_scenario,
-            master_seed=7,
-            replications=3,
-        )
-    )
-    comparison = compare_experiments(baseline, candidate)
 
     brief = build_executive_brief(comparison)
     rescue = comparison.metrics["rescue_funding"]
@@ -173,6 +184,23 @@ def test_worse_rescue_mean_is_visible_when_breach_probabilities_are_saturated() 
         constraint.metric_name == "rescue_funding"
         for constraint in brief.constraints
     )
+
+
+def test_persistent_absolute_breach_remains_an_explicit_constraint() -> None:
+    comparison = _rescue_comparison(
+        baseline_investment_cents=50_000_000,
+        candidate_investment_cents=50_000_000,
+    )
+
+    brief = build_executive_brief(comparison)
+    constrained_metrics = {
+        constraint.metric_name for constraint in brief.constraints
+    }
+
+    assert comparison.metrics["closing_cash"].baseline_breach_probability == 1.0
+    assert comparison.metrics["closing_cash"].candidate_breach_probability == 1.0
+    assert brief.decision_status == "conditional"
+    assert {"closing_cash", "rescue_funding"} <= constrained_metrics
 
 
 def test_brief_is_deterministic_and_collections_are_immutable() -> None:

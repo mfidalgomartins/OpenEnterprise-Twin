@@ -274,7 +274,10 @@ def compare_experiments(
         policy=resolved_policy,
         paired_differences=paired_differences,
         metric_results=metric_results,
-        joint_probability_entries=_joint_probabilities(paired_differences),
+        joint_probability_entries=_joint_probabilities(
+            paired_differences,
+            directions=directions,
+        ),
         digest="0" * 64,
     )
     result = result.model_copy(update={"digest": comparison_content_digest(result)})
@@ -424,7 +427,10 @@ def validate_scenario_comparison(comparison: ScenarioComparison) -> None:
                 f"comparison summary does not reconcile for '{actual.metric_name}'",
             )
 
-    expected_joint = _joint_probabilities(comparison.paired_differences)
+    expected_joint = _joint_probabilities(
+        comparison.paired_differences,
+        directions=directions,
+    )
     if (
         tuple(name for name, _ in comparison.joint_probability_entries)
         != _JOINT_PROBABILITY_NAMES
@@ -659,14 +665,30 @@ def _required_direction(
 
 def _joint_probabilities(
     paired_differences: tuple[PairedDifference, ...],
+    *,
+    directions: Mapping[MetricName, ComparisonDirection | None],
 ) -> tuple[tuple[JointProbabilityName, float], ...]:
     count = len(paired_differences)
     ebitda_without_otif_loss = sum(
-        paired.values["ebitda"] > 0.0 and paired.values["otif"] >= 0.0
+        _is_directional_improvement(
+            paired.values["ebitda"],
+            _required_direction(directions["ebitda"]),
+        )
+        and not _is_directional_decline(
+            paired.values["otif"],
+            _required_direction(directions["otif"]),
+        )
         for paired in paired_differences
     )
     ebitda_and_cash = sum(
-        paired.values["ebitda"] > 0.0 and paired.values["closing_cash"] > 0.0
+        _is_directional_improvement(
+            paired.values["ebitda"],
+            _required_direction(directions["ebitda"]),
+        )
+        and _is_directional_improvement(
+            paired.values["closing_cash"],
+            _required_direction(directions["closing_cash"]),
+        )
         for paired in paired_differences
     )
     return (
@@ -676,3 +698,17 @@ def _joint_probabilities(
         ),
         ("ebitda_and_closing_cash_improve", ebitda_and_cash / count),
     )
+
+
+def _is_directional_improvement(
+    difference: float,
+    direction: ComparisonDirection,
+) -> bool:
+    return difference > 0.0 if direction == "higher" else difference < 0.0
+
+
+def _is_directional_decline(
+    difference: float,
+    direction: ComparisonDirection,
+) -> bool:
+    return difference < 0.0 if direction == "higher" else difference > 0.0

@@ -328,6 +328,34 @@ def test_company_improvement_direction_is_applied() -> None:
     ].probability_of_improvement == pytest.approx(0.5)
 
 
+def test_joint_probabilities_follow_company_improvement_directions() -> None:
+    baseline, candidate = _experiments()
+    rules = tuple(
+        DecisionMetricRule(
+            metric_name=metric_name,
+            materiality_threshold=Decimal("0"),
+            improvement_direction="lower",
+        )
+        for metric_name in ("ebitda", "otif", "closing_cash")
+    )
+    baseline = _rehash(baseline, decision_metric_rules=rules)
+    candidate = _rehash(candidate, decision_metric_rules=rules)
+
+    comparison = compare_experiments(baseline, candidate)
+
+    assert comparison.metrics["ebitda"].probability_of_improvement == 0.25
+    assert (
+        comparison.joint_probabilities[
+            "ebitda_improves_without_otif_declining"
+        ]
+        == 0.0
+    )
+    assert (
+        comparison.joint_probabilities["ebitda_and_closing_cash_improve"]
+        == 0.0
+    )
+
+
 @pytest.mark.parametrize(
     ("field", "changed_value", "error_code"),
     [
