@@ -136,6 +136,20 @@ def build_northstar_company() -> CompanyModel:
                 "annual_interest_rate": "0.08",
                 "revolver_limit_cents": 50_000_000,
             },
+            "decision_policy": {
+                "metric_rules": [
+                    _decision_rule("revenue", "1000000", "higher"),
+                    _decision_rule("ebitda", "500000", "higher"),
+                    _decision_rule("free_cash_flow", "1000000", "higher"),
+                    _decision_rule("closing_cash", "1000000", "higher"),
+                    _decision_rule("otif", "0.005", "higher"),
+                    _decision_rule("cancellation_rate", "0.005", "lower"),
+                    _decision_rule("backlog_units", "10", "lower"),
+                    _decision_rule("capacity_utilization", "0.01", "lower"),
+                    _decision_rule("peak_revolver", "2000000", "lower"),
+                    _decision_rule("rescue_funding", "1", "lower"),
+                ]
+            },
         }
     )
 
@@ -214,4 +228,14 @@ def _product(
                 "commercial_investment_sensitivity": "0.24",
             },
         ],
+    }
+
+
+def _decision_rule(
+    metric_name: str, threshold: str, direction: str
+) -> dict[str, str]:
+    return {
+        "metric_name": metric_name,
+        "materiality_threshold": threshold,
+        "improvement_direction": direction,
     }

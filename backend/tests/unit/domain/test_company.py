@@ -100,3 +100,23 @@ def test_company_models_are_frozen_and_forbid_unknown_fields(
 
     with pytest.raises(ValidationError):
         CompanyModel.model_validate({**northstar_company.model_dump(), "unknown": True})
+
+
+def test_reference_company_defines_auditable_decision_materiality_rules(
+    northstar_company: CompanyModel,
+) -> None:
+    rules = northstar_company.decision_policy.metric_rules
+
+    assert {rule.metric_name for rule in rules} == {
+        "revenue",
+        "ebitda",
+        "free_cash_flow",
+        "closing_cash",
+        "otif",
+        "cancellation_rate",
+        "backlog_units",
+        "capacity_utilization",
+        "peak_revolver",
+        "rescue_funding",
+    }
+    assert all(rule.materiality_threshold >= 0 for rule in rules)

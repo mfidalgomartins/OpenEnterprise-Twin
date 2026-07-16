@@ -1,7 +1,7 @@
 """Typed assumptions for the daily Northstar operating model."""
 
 from decimal import Decimal
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -22,6 +22,10 @@ MoneyCents = Annotated[int, Field(ge=0)]
 PositiveMoneyCents = Annotated[int, Field(gt=0)]
 Minutes = Annotated[int, Field(ge=0)]
 PositiveMinutes = Annotated[int, Field(gt=0)]
+MetricName = Annotated[
+    str,
+    Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$"),
+]
 
 
 class DomainModel(BaseModel):
@@ -177,6 +181,28 @@ class FinancialPolicy(DomainModel):
         return self
 
 
+class DecisionMetricRule(DomainModel):
+    """Company-owned materiality and improvement semantics for one outcome."""
+
+    metric_name: MetricName
+    materiality_threshold: Annotated[Decimal, Field(ge=Decimal("0"))]
+    improvement_direction: Literal["higher", "lower"]
+
+
+class DecisionPolicy(DomainModel):
+    """Auditable decision rules used by paired scenario comparisons."""
+
+    metric_rules: tuple[DecisionMetricRule, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_unique_metric_rules(self) -> Self:
+        _require_unique(
+            [rule.metric_name for rule in self.metric_rules],
+            "decision metric rules",
+        )
+        return self
+
+
 class CompanyModel(DomainModel):
     """Versioned, self-consistent assumptions for one simulated company."""
 
@@ -187,6 +213,7 @@ class CompanyModel(DomainModel):
     customer_segments: Annotated[tuple[CustomerSegment, ...], Field(min_length=1)]
     plant: Plant
     financial_policy: FinancialPolicy
+    decision_policy: DecisionPolicy = Field(default_factory=DecisionPolicy)
 
     @model_validator(mode="after")
     def validate_relationships(self) -> Self:

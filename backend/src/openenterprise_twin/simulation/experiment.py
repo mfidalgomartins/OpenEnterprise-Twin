@@ -13,6 +13,7 @@ from pydantic import Field, model_validator
 
 from openenterprise_twin.domain.company import (
     CompanyModel,
+    DecisionMetricRule,
     DisplayName,
     DomainModel,
     Identifier,
@@ -136,6 +137,7 @@ class ExperimentResult(DomainModel):
     shock_tape_version: VersionString
     resolved_assumptions_hash: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
     plugin_versions: tuple[PluginVersion, ...]
+    decision_metric_rules: tuple[DecisionMetricRule, ...] = ()
     master_seed: NonNegativeInt
     replication_count: Annotated[int, Field(gt=0)]
     created_at: datetime
@@ -194,6 +196,7 @@ def run_experiment(request: ExperimentRequest) -> ExperimentResult:
         shock_tape_version=TAPE_VERSION,
         resolved_assumptions_hash=_assumptions_digest(request),
         plugin_versions=_resolved_plugin_versions(request),
+        decision_metric_rules=request.company.decision_policy.metric_rules,
         master_seed=request.master_seed,
         replication_count=request.replications,
         created_at=created_at,
