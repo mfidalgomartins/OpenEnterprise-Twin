@@ -1,6 +1,7 @@
 """Contracts for immutable, engine-compatible plugin manifests."""
 
 import ast
+import json
 from importlib import import_module
 from itertools import pairwise
 from pathlib import Path
@@ -8,6 +9,13 @@ from types import ModuleType
 
 import pytest
 from pydantic import ValidationError
+
+from openenterprise_twin.simulation.engine import simulate_trace
+from openenterprise_twin.simulation.reference import (
+    build_baseline_scenario,
+    build_northstar_company,
+)
+from openenterprise_twin.simulation.shocks import build_shock_tape
 
 
 def _capability(manifest_module: ModuleType) -> object:
@@ -321,6 +329,25 @@ def test_protocol_outputs_are_typed_and_immutable() -> None:
         quantity.value = 13
     with pytest.raises(ValidationError, match="frozen"):
         output.demand_units = ()
+
+
+def test_risk_metric_receives_canonical_deeply_immutable_trace_evidence() -> None:
+    protocols = import_module("openenterprise_twin.plugins.protocols")
+    company = build_northstar_company()
+    scenario = build_baseline_scenario(horizon_days=1)
+    tape = build_shock_tape(company, scenario, seed=7, replication_id=0)
+    trace = simulate_trace(company, scenario, tape, allow_rescue_funding=True)
+    evidence = protocols.TraceEvidence.from_trace(trace)
+    inputs = protocols.RiskMetricInput(trace=evidence)
+    original_json = inputs.trace.canonical_json
+
+    decoded = json.loads(original_json)
+    decoded["periods"][0]["shipments_units"]["standard-valve"] = 999
+
+    assert inputs.trace.canonical_json == original_json
+    assert inputs.trace.digest == trace.digest
+    with pytest.raises(ValidationError, match="frozen"):
+        inputs.trace.canonical_json = json.dumps(decoded)
 
 
 def test_plugin_contracts_do_not_import_infrastructure_types() -> None:

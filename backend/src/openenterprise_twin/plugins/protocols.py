@@ -1,11 +1,13 @@
 """Typed, infrastructure-free contracts implemented by plugin capabilities."""
 
-from typing import Annotated, Protocol, runtime_checkable
+import json
+from hashlib import sha256
+from typing import Annotated, Protocol, Self, cast, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from openenterprise_twin.domain.company import CompanyModel, FinancialPolicy
-from openenterprise_twin.domain.results import SimulationTrace
+from openenterprise_twin.domain.results import SimulationTrace, trace_content_digest
 from openenterprise_twin.domain.scenario import Scenario
 from openenterprise_twin.reporting.brief import ExecutiveBrief
 from openenterprise_twin.simulation.shocks import ShockTape
@@ -81,7 +83,53 @@ class FinanceModelOutput(PluginContractModel):
 class RiskMetricInput(PluginContractModel):
     """Immutable simulation evidence supplied to a risk metric."""
 
-    trace: SimulationTrace
+    trace: "TraceEvidence"
+
+
+class TraceEvidence(PluginContractModel):
+    """Canonical immutable trace whose digest is validated at the boundary."""
+
+    canonical_json: str
+    digest: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+
+    @classmethod
+    def from_trace(cls, trace: SimulationTrace) -> "TraceEvidence":
+        if trace_content_digest(trace) != trace.digest:
+            raise ValueError("simulation trace does not match its digest")
+        canonical_json = json.dumps(
+            trace.model_dump(mode="json"),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return cls(canonical_json=canonical_json, digest=trace.digest)
+
+    @model_validator(mode="after")
+    def validate_canonical_evidence(self) -> Self:
+        try:
+            decoded = json.loads(self.canonical_json)
+        except json.JSONDecodeError:
+            raise ValueError("canonical_json must contain valid JSON") from None
+        if not isinstance(decoded, dict):
+            raise ValueError("canonical_json must contain a trace object")
+        payload = cast(dict[str, object], decoded)
+        if payload.get("digest") != self.digest:
+            raise ValueError("trace evidence digest field does not match")
+        content = dict(payload)
+        content.pop("digest", None)
+        canonical_content = json.dumps(
+            content,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if sha256(canonical_content).hexdigest() != self.digest:
+            raise ValueError("trace evidence content does not match its digest")
+        if json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ) != self.canonical_json:
+            raise ValueError("trace evidence JSON must use canonical encoding")
+        return self
 
 
 class RiskMetricOutput(PluginContractModel):
