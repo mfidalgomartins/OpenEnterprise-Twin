@@ -15,14 +15,13 @@ VersionString = Annotated[
     str, Field(min_length=5, max_length=32, pattern=r"^[0-9]+\.[0-9]+\.[0-9]+$")
 ]
 PositiveDecimal = Annotated[Decimal, Field(gt=Decimal("0"))]
-NonNegativeDecimal = Annotated[Decimal, Field(ge=Decimal("0"))]
-PositiveMoney = PositiveDecimal
-NonNegativeMoney = NonNegativeDecimal
-PositiveQuantity = PositiveDecimal
-NonNegativeQuantity = NonNegativeDecimal
 Probability = Annotated[Decimal, Field(ge=Decimal("0"), le=Decimal("1"))]
 NonNegativeRate = Annotated[Decimal, Field(ge=Decimal("0"), le=Decimal("10"))]
 Elasticity = Annotated[Decimal, Field(ge=Decimal("-10"), lt=Decimal("0"))]
+MoneyCents = Annotated[int, Field(ge=0)]
+PositiveMoneyCents = Annotated[int, Field(gt=0)]
+Minutes = Annotated[int, Field(ge=0)]
+PositiveMinutes = Annotated[int, Field(gt=0)]
 
 
 class DomainModel(BaseModel):
@@ -45,7 +44,7 @@ class ResourceRequirement(DomainModel):
     """Capacity consumed by one production start."""
 
     resource_id: Identifier
-    minutes_per_unit: PositiveDecimal
+    minutes_per_unit: PositiveMinutes
 
 
 class MaterialRequirement(DomainModel):
@@ -60,8 +59,8 @@ class Product(DomainModel):
 
     product_id: Identifier
     name: DisplayName
-    standard_price: PositiveMoney
-    standard_unit_cost: NonNegativeMoney
+    standard_price_cents: PositiveMoneyCents
+    standard_unit_cost_cents: MoneyCents
     yield_rate: Annotated[Decimal, Field(gt=Decimal("0"), le=Decimal("1"))]
     resource_requirements: Annotated[
         tuple[ResourceRequirement, ...], Field(min_length=1)
@@ -73,9 +72,9 @@ class Product(DomainModel):
 
     @model_validator(mode="after")
     def validate_product(self) -> Self:
-        if self.standard_price <= self.standard_unit_cost:
+        if self.standard_price_cents <= self.standard_unit_cost_cents:
             raise DomainValidationError(
-                "standard_price must exceed standard_unit_cost for each product"
+                "standard_price_cents must exceed standard_unit_cost_cents"
             )
         _require_unique(
             [requirement.resource_id for requirement in self.resource_requirements],
@@ -109,9 +108,9 @@ class ResourceCapacity(DomainModel):
     """A finite production resource measured in integer minutes."""
 
     resource_id: Identifier
-    daily_capacity_minutes: Annotated[int, Field(gt=0)]
-    max_overtime_minutes: Annotated[int, Field(ge=0)]
-    overtime_cost_per_minute: NonNegativeMoney
+    daily_capacity_minutes: PositiveMinutes
+    max_overtime_minutes: Minutes
+    overtime_cost_cents_per_minute: MoneyCents
 
 
 class MaterialPolicy(DomainModel):
@@ -121,7 +120,7 @@ class MaterialPolicy(DomainModel):
     name: DisplayName
     opening_inventory_base_units: Annotated[int, Field(gt=0)]
     reorder_point_base_units: Annotated[int, Field(ge=0)]
-    unit_cost_per_base_unit: PositiveMoney
+    unit_cost_milli_cents: PositiveMoneyCents
     supplier_lead_time_days: Annotated[int, Field(gt=0, le=365)]
     supplier_payment_terms_days: Annotated[int, Field(ge=0, le=365)]
 
@@ -156,20 +155,19 @@ class Plant(DomainModel):
 class FinancialPolicy(DomainModel):
     """Cash, financing and working-capital assumptions for the company."""
 
-    opening_cash: NonNegativeMoney
-    liquidity_floor: NonNegativeMoney
-    cash_target: NonNegativeMoney
-    monthly_fixed_cost: NonNegativeMoney
-    receivable_terms_days: Annotated[int, Field(ge=0, le=365)]
-    payable_terms_days: Annotated[int, Field(ge=0, le=365)]
+    opening_cash_cents: MoneyCents
+    liquidity_floor_cents: MoneyCents
+    cash_target_cents: MoneyCents
+    monthly_fixed_cost_cents: MoneyCents
     annual_interest_rate: NonNegativeRate
-    revolver_limit: NonNegativeMoney
+    revolver_limit_cents: MoneyCents
 
     @model_validator(mode="after")
     def validate_liquidity_policy(self) -> Self:
-        if self.cash_target < self.liquidity_floor:
+        if self.cash_target_cents < self.liquidity_floor_cents:
             raise DomainValidationError(
-                "cash_target must be greater than or equal to liquidity_floor"
+                "cash_target_cents must be greater than or equal to "
+                "liquidity_floor_cents"
             )
         return self
 

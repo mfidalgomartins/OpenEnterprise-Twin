@@ -13,9 +13,13 @@ from openenterprise_twin.domain.company import (
     ResourceRequirement,
 )
 from openenterprise_twin.domain.scenario import (
+    MaterialPolicyChange,
     PolicyLevers,
+    ResourcePolicyChange,
     Scenario,
+    SegmentPaymentTermChange,
     SegmentProductPriceChange,
+    validate_scenario_against_company,
 )
 
 __all__ = [
@@ -24,12 +28,16 @@ __all__ = [
     "DemandProfile",
     "FinancialPolicy",
     "MaterialPolicy",
+    "MaterialPolicyChange",
     "MaterialRequirement",
     "Plant",
     "PolicyLevers",
     "Product",
     "ResourceCapacity",
+    "ResourcePolicyChange",
     "ResourceRequirement",
     "Scenario",
+    "SegmentPaymentTermChange",
     "SegmentProductPriceChange",
+    "validate_scenario_against_company",
 ]
