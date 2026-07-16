@@ -1,0 +1,36 @@
+:root {
+  color-scheme: light;
+
+  --color-canvas: oklch(1 0 0);
+  --color-surface: oklch(0.965 0.004 140);
+  --color-ink: oklch(0.18 0.012 145);
+  --color-muted: oklch(0.45 0.012 145);
+  --color-line: oklch(0.88 0.006 145);
+  --color-decision: oklch(0.48 0.105 140);
+  --color-decision-soft: oklch(0.94 0.035 140);
+  --color-comparison: oklch(0.52 0.12 250);
+  --color-risk: oklch(0.52 0.16 30);
+  --color-warning: oklch(0.61 0.14 70);
+
+  --font-sans: "Inter Variable", Inter, ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --text-meta: 0.75rem;
+  --text-ui: 0.875rem;
+  --text-body: 1rem;
+  --text-section: 1.25rem;
+  --text-decision: clamp(1.5rem, 2.1vw, 1.875rem);
+  --text-report: clamp(2rem, 4vw, 2.25rem);
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+
+  --radius-control: 0.5rem;
+  --radius-panel: 0.75rem;
+  --motion-state: 180ms;
+  --content-maximum: 100rem;
+}
