@@ -4,6 +4,7 @@ from typing import cast
 
 import pytest
 
+from openenterprise_twin.plugins import registry as registry_module
 from openenterprise_twin.plugins.manifest import (
     CapabilityManifest,
     PluginManifest,
@@ -12,6 +13,11 @@ from openenterprise_twin.plugins.protocols import (
     DemandModel,
     DemandModelInput,
     DemandModelOutput,
+    FinanceModelOutput,
+    OperationsModelOutput,
+    OptimizationStrategyOutput,
+    QuantityEntry,
+    ReportSectionOutput,
     RiskMetricInput,
     RiskMetricOutput,
 )
@@ -74,6 +80,20 @@ class AsyncDemandCapability:
 
     async def forecast(self, inputs: DemandModelInput, /) -> DemandModelOutput:
         return DemandModelOutput(demand_units=())
+
+
+class GeneratorDemandCapability:
+    capability_id = "acme.demand.forecast"
+
+    def forecast(self, inputs: DemandModelInput, /) -> DemandModelOutput:
+        yield DemandModelOutput(demand_units=())
+
+
+class AsyncGeneratorDemandCapability:
+    capability_id = "acme.demand.forecast"
+
+    async def forecast(self, inputs: DemandModelInput, /) -> DemandModelOutput:
+        yield DemandModelOutput(demand_units=())
 
 
 class WrongAnnotationDemandCapability:
@@ -181,6 +201,8 @@ def test_registry_rejects_implementation_that_does_not_match_declared_kind() -> 
         WrongArityDemandCapability(),
         NonCallableDemandCapability(),
         AsyncDemandCapability(),
+        GeneratorDemandCapability(),
+        AsyncGeneratorDemandCapability(),
         WrongAnnotationDemandCapability(),
     ),
 )
@@ -214,6 +236,70 @@ def test_resolved_adapter_rejects_a_runtime_output_that_breaks_its_annotation() 
 
     with pytest.raises(CapabilityContractError, match="invalid DemandModelOutput"):
         cast(DemandModel, registry.resolve("acme.demand.forecast")).forecast(inputs)
+
+
+@pytest.mark.parametrize(
+    ("invalid_output", "expected_type"),
+    (
+        (
+            DemandModelOutput.model_construct(
+                demand_units=(
+                    QuantityEntry.model_construct(entity_id="", value=-1),
+                )
+            ),
+            DemandModelOutput,
+        ),
+        (
+            OperationsModelOutput.model_construct(
+                production_start_units=(),
+                shipment_units=(),
+                material_consumption_units=(),
+                capacity_used_minutes=(
+                    QuantityEntry.model_construct(entity_id="", value=-1),
+                ),
+            ),
+            OperationsModelOutput,
+        ),
+        (
+            FinanceModelOutput.model_construct(
+                closing_cash_cents=-1,
+                closing_debt_cents=0,
+                draw_cents=0,
+                repayment_cents=0,
+                rescue_funding_cents=0,
+            ),
+            FinanceModelOutput,
+        ),
+        (
+            RiskMetricOutput.model_construct(metric_id="", value=float("nan")),
+            RiskMetricOutput,
+        ),
+        (
+            OptimizationStrategyOutput.model_construct(
+                candidate_scenarios=("invalid",)
+            ),
+            OptimizationStrategyOutput,
+        ),
+        (
+            ReportSectionOutput.model_construct(
+                section_id="",
+                title="",
+                body_markdown=1,
+            ),
+            ReportSectionOutput,
+        ),
+    ),
+)
+def test_runtime_boundary_canonically_revalidates_every_output_dto(
+    invalid_output: object,
+    expected_type: type[object],
+) -> None:
+    with pytest.raises(CapabilityContractError):
+        registry_module._require_model(
+            invalid_output,
+            expected_type,
+            capability_id="acme.capability",
+        )
 
 
 def test_registry_accepts_multiple_capabilities_from_one_manifest() -> None:

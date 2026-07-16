@@ -6,6 +6,7 @@ from types import MappingProxyType
 from typing import Protocol, cast, get_type_hints, runtime_checkable
 
 from pydantic import BaseModel, ValidationError
+from pydantic_core import PydanticSerializationError
 
 from openenterprise_twin.plugins.manifest import (
     CapabilityKind,
@@ -202,19 +203,19 @@ def _validate_implementation(
             f"'{method_name}' for kind '{kind}'"
         )
     method = cast(Callable[..., object], method_object)
-    if inspect.iscoroutinefunction(method):
+    if (
+        inspect.iscoroutinefunction(method)
+        or inspect.isgeneratorfunction(method)
+        or inspect.isasyncgenfunction(method)
+    ):
         raise CapabilityContractError(
             f"capability '{capability.capability_id}' method '{method_name}' "
-            "must be synchronous"
+            "must synchronously return one DTO"
         )
     parameters = tuple(inspect.signature(method).parameters.values())
     if (
         len(parameters) != 1
-        or parameters[0].kind
-        not in {
-            inspect.Parameter.POSITIONAL_ONLY,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        }
+        or parameters[0].kind is not inspect.Parameter.POSITIONAL_ONLY
         or parameters[0].default is not inspect.Parameter.empty
     ):
         raise CapabilityContractError(
@@ -283,7 +284,15 @@ def _require_model[ModelT: BaseModel](
             f"capability '{capability_id}' returned an invalid "
             f"{expected_type.__name__} result"
         )
-    return value
+    try:
+        return expected_type.model_validate(
+            value.model_dump(mode="python", warnings="error")
+        )
+    except (PydanticSerializationError, ValidationError) as error:
+        raise CapabilityContractError(
+            f"capability '{capability_id}' returned an invalid "
+            f"{expected_type.__name__} result"
+        ) from error
 
 
 class _DemandModelAdapter:
@@ -295,9 +304,11 @@ class _DemandModelAdapter:
         return self._implementation.capability_id
 
     def forecast(self, inputs: DemandModelInput, /) -> DemandModelOutput:
-        _require_model(inputs, DemandModelInput, capability_id=self.capability_id)
+        canonical_inputs = _require_model(
+            inputs, DemandModelInput, capability_id=self.capability_id
+        )
         return _require_model(
-            self._implementation.forecast(inputs),
+            self._implementation.forecast(canonical_inputs),
             DemandModelOutput,
             capability_id=self.capability_id,
         )
@@ -312,9 +323,11 @@ class _OperationsModelAdapter:
         return self._implementation.capability_id
 
     def plan(self, inputs: OperationsModelInput, /) -> OperationsModelOutput:
-        _require_model(inputs, OperationsModelInput, capability_id=self.capability_id)
+        canonical_inputs = _require_model(
+            inputs, OperationsModelInput, capability_id=self.capability_id
+        )
         return _require_model(
-            self._implementation.plan(inputs),
+            self._implementation.plan(canonical_inputs),
             OperationsModelOutput,
             capability_id=self.capability_id,
         )
@@ -329,9 +342,11 @@ class _FinanceModelAdapter:
         return self._implementation.capability_id
 
     def project(self, inputs: FinanceModelInput, /) -> FinanceModelOutput:
-        _require_model(inputs, FinanceModelInput, capability_id=self.capability_id)
+        canonical_inputs = _require_model(
+            inputs, FinanceModelInput, capability_id=self.capability_id
+        )
         return _require_model(
-            self._implementation.project(inputs),
+            self._implementation.project(canonical_inputs),
             FinanceModelOutput,
             capability_id=self.capability_id,
         )
@@ -346,9 +361,11 @@ class _RiskMetricAdapter:
         return self._implementation.capability_id
 
     def calculate(self, inputs: RiskMetricInput, /) -> RiskMetricOutput:
-        _require_model(inputs, RiskMetricInput, capability_id=self.capability_id)
+        canonical_inputs = _require_model(
+            inputs, RiskMetricInput, capability_id=self.capability_id
+        )
         return _require_model(
-            self._implementation.calculate(inputs),
+            self._implementation.calculate(canonical_inputs),
             RiskMetricOutput,
             capability_id=self.capability_id,
         )
@@ -367,13 +384,13 @@ class _OptimizationStrategyAdapter:
         inputs: OptimizationStrategyInput,
         /,
     ) -> OptimizationStrategyOutput:
-        _require_model(
+        canonical_inputs = _require_model(
             inputs,
             OptimizationStrategyInput,
             capability_id=self.capability_id,
         )
         return _require_model(
-            self._implementation.optimize(inputs),
+            self._implementation.optimize(canonical_inputs),
             OptimizationStrategyOutput,
             capability_id=self.capability_id,
         )
@@ -388,9 +405,11 @@ class _ReportSectionAdapter:
         return self._implementation.capability_id
 
     def render(self, inputs: ReportSectionInput, /) -> ReportSectionOutput:
-        _require_model(inputs, ReportSectionInput, capability_id=self.capability_id)
+        canonical_inputs = _require_model(
+            inputs, ReportSectionInput, capability_id=self.capability_id
+        )
         return _require_model(
-            self._implementation.render(inputs),
+            self._implementation.render(canonical_inputs),
             ReportSectionOutput,
             capability_id=self.capability_id,
         )
