@@ -19,6 +19,7 @@ def apply_financing(
     cash_before_financing_cents: int,
     opening_debt_cents: int,
     policy: FinancialPolicy,
+    allow_repayment: bool = True,
 ) -> FinancingResult:
     """Maintain the liquidity floor, then repay excess cash above target."""
 
@@ -29,14 +30,17 @@ def apply_financing(
     draw = min(required_draw, available_facility)
     cash_after_draw = cash_before_financing_cents + draw
     debt_after_draw = opening_debt_cents + draw
-    if cash_after_draw < 0:
+    if cash_after_draw < policy.liquidity_floor_cents:
         raise InvariantViolation(
-            "liquidity_exhausted",
-            "cash remains negative after the revolving facility is exhausted",
+            "liquidity_floor_breach",
+            "cash remains below the liquidity floor after the revolving facility "
+            "is exhausted",
         )
 
-    repayment = min(
-        max(0, cash_after_draw - policy.cash_target_cents), debt_after_draw
+    repayment = (
+        min(max(0, cash_after_draw - policy.cash_target_cents), debt_after_draw)
+        if allow_repayment
+        else 0
     )
     return FinancingResult(
         closing_cash_cents=cash_after_draw - repayment,

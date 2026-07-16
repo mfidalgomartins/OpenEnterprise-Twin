@@ -2,7 +2,7 @@
 
 from collections.abc import Collection
 from decimal import Decimal
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
@@ -97,6 +97,9 @@ class Scenario(DomainModel):
     company_model_version: VersionString
     schema_version: VersionString
     horizon_days: Annotated[int, Field(gt=0, le=3650)]
+    warmup_days: Annotated[int, Field(ge=0, le=3650)] = 0
+    evaluation_days: Annotated[int, Field(ge=0, le=3650)] = 0
+    runoff_days: Annotated[int, Field(ge=0, le=3650)] = 0
     baseline_scenario_id: Identifier | None = None
     policy_levers: PolicyLevers = Field(default_factory=PolicyLevers)
 
@@ -106,7 +109,33 @@ class Scenario(DomainModel):
             raise DomainValidationError(
                 "a scenario cannot reference itself as a baseline"
             )
+        configured_lifecycle = (
+            self.warmup_days + self.evaluation_days + self.runoff_days
+        )
+        if configured_lifecycle and configured_lifecycle != self.horizon_days:
+            raise DomainValidationError(
+                "scenario lifecycle phases must sum to horizon_days"
+            )
+        if configured_lifecycle and self.evaluation_days == 0:
+            raise DomainValidationError(
+                "scenario lifecycle phases require a positive evaluation period"
+            )
         return self
+
+    def phase_for_day(
+        self, day_index: int
+    ) -> Literal["warmup", "evaluation", "runoff"]:
+        """Return the lifecycle phase; legacy unphased scenarios are evaluation-only."""
+
+        if not 0 <= day_index < self.horizon_days:
+            raise DomainValidationError("day index is outside the scenario horizon")
+        if self.warmup_days + self.evaluation_days + self.runoff_days == 0:
+            return "evaluation"
+        if day_index < self.warmup_days:
+            return "warmup"
+        if day_index < self.warmup_days + self.evaluation_days:
+            return "evaluation"
+        return "runoff"
 
 
 def validate_scenario_against_company(

@@ -13,18 +13,39 @@ from openenterprise_twin.domain.company import (
     Product,
 )
 from openenterprise_twin.domain.errors import DomainValidationError
-from openenterprise_twin.domain.results import PeriodResult, SimulationTrace
+from openenterprise_twin.domain.results import (
+    PeriodResult,
+    SimulationTrace,
+    trace_content_digest,
+)
 from openenterprise_twin.domain.scenario import (
     Scenario,
     validate_scenario_against_company,
 )
-from openenterprise_twin.simulation.demand import expected_daily_units
+from openenterprise_twin.simulation.demand import (
+    binomial_quantile,
+    collection_delay_days,
+    expected_daily_units,
+    negative_binomial_quantile,
+    seasonality_multiplier,
+)
 from openenterprise_twin.simulation.finance import apply_financing
-from openenterprise_twin.simulation.invariants import validate_period
-from openenterprise_twin.simulation.operations import plan_production
-from openenterprise_twin.simulation.shocks import ShockTape, demand_key
+from openenterprise_twin.simulation.invariants import validate_period, validate_trace
+from openenterprise_twin.simulation.operations import (
+    material_inventory_levels,
+    plan_production,
+    validate_production_plan,
+)
+from openenterprise_twin.simulation.shocks import (
+    RNG_ALGORITHM,
+    TAPE_VERSION,
+    DailyShock,
+    ShockTape,
+    demand_key,
+)
 
 START_DATE = date(2025, 1, 1)
+ENGINE_VERSION = "0.1.0"
 
 
 @dataclass(slots=True)
@@ -38,6 +59,9 @@ class _Order:
     original_units: int
     open_units: int
     unit_price_cents: int
+    order_count: int
+    shipped_units: int = 0
+    all_shipments_on_time: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +85,7 @@ def simulate_trace(
     """Simulate one auditable trace; randomness may enter only through the tape."""
 
     validate_scenario_against_company(scenario, company)
-    _validate_tape(scenario, shock_tape)
+    _validate_tape(company, scenario, shock_tape)
 
     products = {product.product_id: product for product in company.products}
     segments = {
@@ -86,14 +110,19 @@ def simulate_trace(
     cash_cents = company.financial_policy.opening_cash_cents
     debt_cents = 0
     next_order_id = 1
+    retention_factors = {
+        segment.segment_id: 1.0 for segment in company.customer_segments
+    }
     periods: list[PeriodResult] = []
 
     for day_index, shock in enumerate(shock_tape.days):
         period_date = START_DATE + timedelta(days=day_index)
+        phase = scenario.phase_for_day(day_index)
         is_operating_day = period_date.weekday() < 5
         opening_finished_goods = finished_goods.copy()
         opening_material_inventory = material_inventory.copy()
         opening_backlog = _backlog_by_product(orders, products)
+        opening_wip = _work_in_progress_by_product(work_orders, products)
         opening_cash = cash_cents
         opening_debt = debt_cents
 
@@ -102,15 +131,14 @@ def simulate_trace(
         material_consumption = {material_id: 0 for material_id in materials}
         shipments = {product_id: 0 for product_id in products}
         new_orders = {product_id: 0 for product_id in products}
+        lost_demand = {product_id: 0 for product_id in products}
         cancellations = {product_id: 0 for product_id in products}
+        new_orders_count = {product_id: 0 for product_id in products}
+        fulfilled_orders_count = {product_id: 0 for product_id in products}
+        otif_orders_count = {product_id: 0 for product_id in products}
+        on_time_shipment_units = {product_id: 0 for product_id in products}
 
-        work_orders, completed = _complete_work_orders(
-            work_orders, day_index, shock.yield_rate_by_product
-        )
-        for product_id, units in completed.items():
-            finished_goods[product_id] += units
-            good_production[product_id] += units
-
+        # Supplier receipts precede production completions by contract.
         purchase_orders, received = _receive_purchase_orders(
             purchase_orders, day_index
         )
@@ -124,20 +152,41 @@ def simulate_trace(
             ) // 1000
             payables[due_day] = payables.get(due_day, 0) + invoice
 
+        work_orders, completed_starts, completed_good = _complete_work_orders(
+            work_orders, day_index, shock.yield_rate_by_product
+        )
+        production_scrap = {product_id: 0 for product_id in products}
+        for product_id, units in completed_good.items():
+            finished_goods[product_id] += units
+            good_production[product_id] += units
+            production_scrap[product_id] = completed_starts[product_id] - units
+
         collections_cents = receivables.pop(day_index, 0)
         supplier_payments_cents = payables.pop(day_index, 0)
+        obligation_financing = apply_financing(
+            cash_before_financing_cents=(
+                cash_cents + collections_cents - supplier_payments_cents
+            ),
+            opening_debt_cents=debt_cents,
+            policy=company.financial_policy,
+            allow_repayment=False,
+        )
+        cash_cents = obligation_financing.closing_cash_cents
+        debt_cents = obligation_financing.closing_debt_cents
 
-        if is_operating_day:
-            created_orders, next_order_id = _create_orders(
+        if is_operating_day and phase != "runoff":
+            created_orders, next_order_id, lost_demand = _create_orders(
                 company=company,
                 scenario=scenario,
-                shock_multipliers=shock.demand_multiplier_by_key,
+                shock=shock,
                 day_index=day_index,
                 next_order_id=next_order_id,
+                retention_factors=retention_factors,
             )
             orders.extend(created_orders)
             for order in created_orders:
                 new_orders[order.product_id] += order.original_units
+                new_orders_count[order.product_id] += order.order_count
 
         revenue_cents, cogs_cents = _ship_orders(
             orders=orders,
@@ -148,8 +197,18 @@ def simulate_trace(
             scenario=scenario,
             day_index=day_index,
             receivables=receivables,
+            shock=shock,
+            fulfilled_orders_count=fulfilled_orders_count,
+            otif_orders_count=otif_orders_count,
+            on_time_shipment_units=on_time_shipment_units,
         )
-        _cancel_overdue_orders(orders, cancellations, day_index)
+        _cancel_overdue_orders(
+            orders=orders,
+            cancellations=cancellations,
+            segments=segments,
+            shock=shock,
+            day_index=day_index,
+        )
         orders = [order for order in orders if order.open_units > 0]
 
         backlog = _backlog_by_product(orders, products)
@@ -162,6 +221,11 @@ def simulate_trace(
             finished_goods=finished_goods,
             backlog=backlog,
             work_in_progress=work_in_progress,
+            material_inventory=material_inventory,
+        )
+        validate_production_plan(
+            company=company,
+            plan=production_plan,
             material_inventory=material_inventory,
         )
         conversion_cost_cents = 0
@@ -186,6 +250,14 @@ def simulate_trace(
             material_inventory[material_id] -= consumed
             material_consumption[material_id] += consumed
 
+        resources = {
+            resource.resource_id: resource for resource in company.plant.resources
+        }
+        overtime_cost_cents = sum(
+            minutes * resources[resource_id].overtime_cost_cents_per_minute
+            for resource_id, minutes in production_plan.overtime_used.items()
+        )
+
         purchase_orders.extend(
             _place_purchase_orders(
                 company=company,
@@ -208,9 +280,8 @@ def simulate_trace(
         )
         cash_before_financing = (
             cash_cents
-            + collections_cents
-            - supplier_payments_cents
             - conversion_cost_cents
+            - overtime_cost_cents
             - fixed_cost_cents
             - interest_paid_cents
             - capital_investment_cents
@@ -222,34 +293,61 @@ def simulate_trace(
         )
         cash_cents = financing.closing_cash_cents
         debt_cents = financing.closing_debt_cents
+        revolver_draw_cents = obligation_financing.draw_cents + financing.draw_cents
+        revolver_repayment_cents = (
+            obligation_financing.repayment_cents + financing.repayment_cents
+        )
+
+        retention_factors = _update_retention_factors(
+            company=company,
+            orders=orders,
+            day_index=day_index,
+            current=retention_factors,
+        )
+
+        closing_wip = _work_in_progress_by_product(work_orders, products)
 
         period = PeriodResult(
             period_index=day_index,
             period_date=period_date,
+            phase=phase,
             is_operating_day=is_operating_day,
             opening_finished_goods_units=opening_finished_goods,
             good_production_units=good_production,
             shipments_units=shipments,
             closing_finished_goods_units=finished_goods.copy(),
+            opening_wip_units=opening_wip,
+            production_start_units=production_plan.starts_by_product,
+            completed_production_units=completed_starts,
+            production_scrap_units=production_scrap,
+            closing_wip_units=closing_wip,
             opening_backlog_units=opening_backlog,
             new_orders_units=new_orders,
+            lost_demand_units=lost_demand,
             cancellations_units=cancellations,
             closing_backlog_units=_backlog_by_product(orders, products),
+            new_orders_count=new_orders_count,
+            fulfilled_orders_count=fulfilled_orders_count,
+            otif_orders_count=otif_orders_count,
+            on_time_shipment_units=on_time_shipment_units,
+            retention_factor_by_segment=retention_factors.copy(),
             opening_material_inventory_units=opening_material_inventory,
             material_receipts_units=material_receipts,
             material_consumption_units=material_consumption,
             closing_material_inventory_units=material_inventory.copy(),
             capacity_available_minutes=production_plan.capacity_available,
             capacity_used_minutes=production_plan.capacity_used,
+            overtime_used_minutes=production_plan.overtime_used,
             opening_cash_cents=opening_cash,
             collections_cents=collections_cents,
             supplier_payments_cents=supplier_payments_cents,
             conversion_cost_cents=conversion_cost_cents,
+            overtime_cost_cents=overtime_cost_cents,
             fixed_cost_cents=fixed_cost_cents,
             interest_paid_cents=interest_paid_cents,
             capital_investment_cents=capital_investment_cents,
-            revolver_draw_cents=financing.draw_cents,
-            revolver_repayment_cents=financing.repayment_cents,
+            revolver_draw_cents=revolver_draw_cents,
+            revolver_repayment_cents=revolver_repayment_cents,
             closing_cash_cents=cash_cents,
             opening_revolver_debt_cents=opening_debt,
             closing_revolver_debt_cents=debt_cents,
@@ -259,34 +357,92 @@ def simulate_trace(
         validate_period(period)
         periods.append(period)
 
-    digest = _trace_digest(periods)
-    return SimulationTrace(
+    resolved_assumptions_hash = _canonical_digest(
+        {
+            "company": company.model_dump(mode="json"),
+            "scenario": scenario.model_dump(mode="json"),
+        }
+    )
+    shock_tape_digest = _canonical_digest(shock_tape.model_dump(mode="json"))
+    trace = SimulationTrace(
         company_model_version=company.model_version,
+        scenario_schema_version=scenario.schema_version,
+        engine_version=ENGINE_VERSION,
+        shock_tape_version=shock_tape.tape_version,
         scenario_id=scenario.scenario_id,
         seed=shock_tape.seed,
         replication_id=shock_tape.replication_id,
         rng_algorithm=shock_tape.rng_algorithm,
+        resolved_assumptions_hash=resolved_assumptions_hash,
+        shock_tape_digest=shock_tape_digest,
         periods=tuple(periods),
-        digest=digest,
+        digest="0" * 64,
     )
+    trace = trace.model_copy(update={"digest": trace_content_digest(trace)})
+    validate_trace(trace)
+    return trace
 
 
-def _validate_tape(scenario: Scenario, tape: ShockTape) -> None:
+def _validate_tape(
+    company: CompanyModel, scenario: Scenario, tape: ShockTape
+) -> None:
     if (
         tape.horizon_days != scenario.horizon_days
         or len(tape.days) != scenario.horizon_days
     ):
         raise DomainValidationError("shock tape horizon does not match scenario")
+    if tape.tape_version != TAPE_VERSION or tape.rng_algorithm != RNG_ALGORITHM:
+        raise DomainValidationError(
+            "shock tape version or RNG algorithm is unsupported"
+        )
+
+    expected_demand_keys = {
+        demand_key(product.product_id, profile.segment_id)
+        for product in company.products
+        for profile in product.demand_profiles
+    }
+    expected_products = {product.product_id for product in company.products}
+    expected_segments = {
+        segment.segment_id for segment in company.customer_segments
+    }
+    expected_resources = {
+        resource.resource_id for resource in company.plant.resources
+    }
+    expected_materials = {
+        material.material_id for material in company.plant.materials
+    }
+    for day_index, shock in enumerate(tape.days):
+        dimensions = (
+            {key for key, _ in shock.demand_multiplier_entries},
+            {key for key, _ in shock.arrival_inverse_cdf_uniform_entries},
+            {key for key, _ in shock.cancellation_binomial_uniform_entries},
+        )
+        if shock.day_index != day_index or any(
+            keys != expected_demand_keys for keys in dimensions
+        ):
+            raise DomainValidationError("shock tape demand dimensions are invalid")
+        actual_segments = {
+            key for key, _ in shock.collection_delay_uniform_entries
+        }
+        if actual_segments != expected_segments:
+            raise DomainValidationError("shock tape segment dimensions are invalid")
+        if {key for key, _ in shock.capacity_factor_entries} != expected_resources:
+            raise DomainValidationError("shock tape resource dimensions are invalid")
+        if {key for key, _ in shock.yield_rate_entries} != expected_products:
+            raise DomainValidationError("shock tape product dimensions are invalid")
+        if {key for key, _ in shock.supplier_delay_days_entries} != expected_materials:
+            raise DomainValidationError("shock tape material dimensions are invalid")
 
 
 def _create_orders(
     *,
     company: CompanyModel,
     scenario: Scenario,
-    shock_multipliers: dict[str, float],
+    shock: DailyShock,
     day_index: int,
     next_order_id: int,
-) -> tuple[list[_Order], int]:
+    retention_factors: dict[str, float],
+) -> tuple[list[_Order], int, dict[str, int]]:
     segments = {
         segment.segment_id: segment for segment in company.customer_segments
     }
@@ -295,6 +451,7 @@ def _create_orders(
         for change in scenario.policy_levers.price_changes
     }
     created: list[_Order] = []
+    lost_demand = {product.product_id: 0 for product in company.products}
     for product in sorted(company.products, key=lambda item: item.product_id):
         for profile in sorted(
             product.demand_profiles, key=lambda item: item.segment_id
@@ -307,22 +464,43 @@ def _create_orders(
                 scenario.policy_levers.commercial_investment_change
                 * profile.commercial_investment_sensitivity
             )
-            expected = expected_daily_units(
+            demand_without_retention = expected_daily_units(
                 baseline_units=Decimal(profile.daily_baseline_units),
                 price_change=price_change,
                 elasticity=profile.price_elasticity,
                 demand_multiplier=Decimal(
                     str(
-                        shock_multipliers[
-                            demand_key(product.product_id, segment.segment_id)
-                        ]
+                        shock.demand_multiplier(
+                            product.product_id, segment.segment_id
+                        )
+                        * seasonality_multiplier(
+                            day_index, float(profile.seasonality_amplitude)
+                        )
                     )
                 )
                 * commercial_factor,
             )
-            units = int(expected.to_integral_value(rounding=ROUND_HALF_UP))
-            if units == 0:
+            expected = demand_without_retention * Decimal(
+                str(retention_factors[segment.segment_id])
+            )
+            lost_demand[product.product_id] += max(
+                0,
+                int(
+                    (demand_without_retention - expected).to_integral_value(
+                        rounding=ROUND_HALF_UP
+                    )
+                ),
+            )
+            order_count = negative_binomial_quantile(
+                mean=float(expected / Decimal(segment.mean_order_size)),
+                dispersion=float(segment.order_dispersion),
+                uniform=shock.arrival_inverse_cdf_uniform(
+                    product.product_id, segment.segment_id
+                ),
+            )
+            if order_count == 0:
                 continue
+            units = order_count * segment.mean_order_size
             price = (
                 Decimal(product.standard_price_cents)
                 * (Decimal("1") - segment.discount_rate)
@@ -340,10 +518,11 @@ def _create_orders(
                     original_units=units,
                     open_units=units,
                     unit_price_cents=unit_price_cents,
+                    order_count=order_count,
                 )
             )
             next_order_id += 1
-    return created, next_order_id
+    return created, next_order_id, lost_demand
 
 
 def _ship_orders(
@@ -356,6 +535,10 @@ def _ship_orders(
     scenario: Scenario,
     day_index: int,
     receivables: dict[int, int],
+    shock: DailyShock,
+    fulfilled_orders_count: dict[str, int],
+    otif_orders_count: dict[str, int],
+    on_time_shipment_units: dict[str, int],
 ) -> tuple[int, int]:
     payment_changes = {
         change.segment_id: change.change_days
@@ -368,6 +551,11 @@ def _ship_orders(
         if shipped == 0:
             continue
         order.open_units -= shipped
+        order.shipped_units += shipped
+        if day_index > order.due_day:
+            order.all_shipments_on_time = False
+        else:
+            on_time_shipment_units[order.product_id] += shipped
         finished_goods[order.product_id] -= shipped
         shipments[order.product_id] += shipped
         invoice = shipped * order.unit_price_cents
@@ -378,27 +566,57 @@ def _ship_orders(
             day_index
             + segment.payment_terms_days
             + payment_changes.get(order.segment_id, 0)
+            + collection_delay_days(
+                shock.collection_delay_uniform(order.segment_id)
+            )
         )
+        due_day = max(day_index, due_day)
         receivables[due_day] = receivables.get(due_day, 0) + invoice
+        if order.open_units == 0:
+            fulfilled_orders_count[order.product_id] += order.order_count
+            if order.all_shipments_on_time:
+                otif_orders_count[order.product_id] += order.order_count
     return revenue, cogs
 
 
 def _cancel_overdue_orders(
-    orders: list[_Order], cancellations: dict[str, int], day_index: int
+    *,
+    orders: list[_Order],
+    cancellations: dict[str, int],
+    segments: dict[str, CustomerSegment],
+    shock: DailyShock,
+    day_index: int,
 ) -> None:
+    grouped: dict[tuple[str, str], list[_Order]] = {}
     for order in orders:
         if order.open_units and day_index > order.due_day + order.grace_days:
-            cancellations[order.product_id] += order.open_units
-            order.open_units = 0
+            grouped.setdefault((order.product_id, order.segment_id), []).append(order)
+
+    for (product_id, segment_id), overdue_orders in grouped.items():
+        overdue_units = sum(order.open_units for order in overdue_orders)
+        cancelled_units = binomial_quantile(
+            trials=overdue_units,
+            probability=float(segments[segment_id].cancellation_probability),
+            uniform=shock.cancellation_binomial_uniform(product_id, segment_id),
+        )
+        cancellations[product_id] += cancelled_units
+        remaining = cancelled_units
+        for order in sorted(overdue_orders, key=lambda item: item.order_id):
+            cancelled = min(order.open_units, remaining)
+            order.open_units -= cancelled
+            remaining -= cancelled
+            if remaining == 0:
+                break
 
 
 def _complete_work_orders(
     work_orders: list[_WorkOrder],
     day_index: int,
     yield_rates: dict[str, float],
-) -> tuple[list[_WorkOrder], dict[str, int]]:
+) -> tuple[list[_WorkOrder], dict[str, int], dict[str, int]]:
     remaining: list[_WorkOrder] = []
-    completed: dict[str, int] = {}
+    completed_starts = {product_id: 0 for product_id in yield_rates}
+    completed_good = {product_id: 0 for product_id in yield_rates}
     for work_order in work_orders:
         if work_order.due_day > day_index:
             remaining.append(work_order)
@@ -407,10 +625,9 @@ def _complete_work_orders(
             Decimal(work_order.started_units * yield_rates[work_order.product_id])
             .to_integral_value(rounding=ROUND_HALF_UP)
         )
-        completed[work_order.product_id] = (
-            completed.get(work_order.product_id, 0) + good_units
-        )
-    return remaining, completed
+        completed_starts[work_order.product_id] += work_order.started_units
+        completed_good[work_order.product_id] += good_units
+    return remaining, completed_starts, completed_good
 
 
 def _receive_purchase_orders(
@@ -433,17 +650,19 @@ def _place_purchase_orders(
     changes = {
         change.material_id: change for change in scenario.policy_levers.material_changes
     }
+    inventory_levels = material_inventory_levels(company, scenario)
     pending = {material.material_id: 0 for material in company.plant.materials}
     for purchase_order in open_purchase_orders:
         pending[purchase_order.material_id] += purchase_order.quantity
     created: list[_PurchaseOrder] = []
     for material in company.plant.materials:
+        reorder_point, order_up_to = inventory_levels[material.material_id]
         inventory_position = material_inventory[material.material_id] + pending[
             material.material_id
         ]
-        if inventory_position > material.reorder_point_base_units:
+        if inventory_position > reorder_point:
             continue
-        quantity = material.opening_inventory_base_units - inventory_position
+        quantity = order_up_to - inventory_position
         change = changes.get(material.material_id)
         lead_time_factor = (
             Decimal("1") - change.supplier_lead_time_improvement
@@ -524,9 +743,43 @@ def _daily_interest_cents(debt_cents: int, annual_rate: Decimal) -> int:
     return int(interest.to_integral_value(rounding=ROUND_HALF_UP))
 
 
-def _trace_digest(periods: list[PeriodResult]) -> str:
+def _update_retention_factors(
+    *,
+    company: CompanyModel,
+    orders: list[_Order],
+    day_index: int,
+    current: dict[str, float],
+) -> dict[str, float]:
+    """Apply contractual churn and a gradual service-reputation penalty."""
+
+    result: dict[str, float] = {}
+    for segment in company.customer_segments:
+        open_units = sum(
+            order.open_units
+            for order in orders
+            if order.segment_id == segment.segment_id
+        )
+        late_units = sum(
+            order.open_units
+            for order in orders
+            if order.segment_id == segment.segment_id and day_index > order.due_day
+        )
+        late_share = late_units / open_units if open_units else 0.0
+        annual_retention = 1.0 - float(segment.churn_probability)
+        daily_retention = annual_retention ** (1.0 / 365.0)
+        service_penalty = (
+            float(segment.service_reputation_sensitivity) * late_share / 30.0
+        )
+        result[segment.segment_id] = max(
+            0.0,
+            min(1.0, current[segment.segment_id] * daily_retention - service_penalty),
+        )
+    return result
+
+
+def _canonical_digest(value: object) -> str:
     canonical = json.dumps(
-        [period.model_dump(mode="json") for period in periods],
+        value,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")

@@ -193,7 +193,21 @@ def test_scenario_is_immutable() -> None:
     scenario = build_scenario(PolicyLevers())
 
     with pytest.raises(ValidationError):
-        scenario.horizon_days = 364  # type: ignore[misc]
+        scenario.horizon_days = 364
+
+
+def test_scenario_requires_lifecycle_phases_to_match_horizon() -> None:
+    with pytest.raises(ValidationError, match="lifecycle phases"):
+        Scenario(
+            scenario_id="invalid-lifecycle",
+            name="Invalid lifecycle",
+            company_model_version="0.1.0",
+            schema_version="0.1.0",
+            horizon_days=515,
+            warmup_days=91,
+            evaluation_days=364,
+            runoff_days=59,
+        )
 
 
 def build_scenario(policy_levers: PolicyLevers) -> Scenario:

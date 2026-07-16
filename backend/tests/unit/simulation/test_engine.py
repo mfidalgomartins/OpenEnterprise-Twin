@@ -1,7 +1,17 @@
 from decimal import Decimal
 
-from openenterprise_twin.simulation.demand import expected_daily_units
-from openenterprise_twin.simulation.engine import simulate_trace
+from openenterprise_twin.domain.scenario import PolicyLevers, ResourcePolicyChange
+from openenterprise_twin.simulation.demand import (
+    binomial_quantile,
+    expected_daily_units,
+    negative_binomial_quantile,
+    seasonality_multiplier,
+)
+from openenterprise_twin.simulation.engine import (
+    _cancel_overdue_orders,
+    _Order,
+    simulate_trace,
+)
 from openenterprise_twin.simulation.reference import (
     build_baseline_scenario,
     build_northstar_company,
@@ -60,6 +70,84 @@ def test_same_seed_produces_identical_trace() -> None:
     assert len(first_trace.periods) == 30
 
 
+def test_engine_consumes_negative_binomial_arrival_draws() -> None:
+    company = build_northstar_company()
+    scenario = build_baseline_scenario(horizon_days=2)
+    tape = build_shock_tape(company, scenario, seed=20260716, replication_id=732)
+    shock = tape.days[0]
+
+    trace = simulate_trace(company, scenario, tape)
+
+    for product in company.products:
+        expected_units = 0
+        for profile in product.demand_profiles:
+            segment = next(
+                item
+                for item in company.customer_segments
+                if item.segment_id == profile.segment_id
+            )
+            conditional_units = expected_daily_units(
+                baseline_units=Decimal(profile.daily_baseline_units),
+                price_change=Decimal("0"),
+                elasticity=profile.price_elasticity,
+                demand_multiplier=Decimal(
+                    str(
+                        shock.demand_multiplier(product.product_id, segment.segment_id)
+                        * seasonality_multiplier(
+                            0, float(profile.seasonality_amplitude)
+                        )
+                    )
+                ),
+            )
+            order_count = negative_binomial_quantile(
+                mean=float(conditional_units / Decimal(segment.mean_order_size)),
+                dispersion=float(segment.order_dispersion),
+                uniform=shock.arrival_inverse_cdf_uniform(
+                    product.product_id, segment.segment_id
+                ),
+            )
+            expected_units += order_count * segment.mean_order_size
+        assert trace.periods[0].new_orders_units[product.product_id] == expected_units
+
+
+def test_overdue_cancellation_uses_conditional_binomial_draw() -> None:
+    company = build_northstar_company()
+    segment = company.customer_segments[0]
+    scenario = build_baseline_scenario(horizon_days=2)
+    shock = build_shock_tape(
+        company, scenario, seed=20260716, replication_id=733
+    ).days[1]
+    order = _Order(
+        order_id=1,
+        product_id="standard-valve",
+        segment_id=segment.segment_id,
+        order_day=0,
+        due_day=0,
+        grace_days=0,
+        original_units=100,
+        open_units=100,
+        unit_price_cents=10_000,
+        order_count=10,
+    )
+    cancellations = {product.product_id: 0 for product in company.products}
+
+    _cancel_overdue_orders(
+        orders=[order],
+        cancellations=cancellations,
+        segments={segment.segment_id: segment},
+        shock=shock,
+        day_index=1,
+    )
+
+    expected = binomial_quantile(
+        100,
+        float(segment.cancellation_probability),
+        shock.cancellation_binomial_uniform("standard-valve", segment.segment_id),
+    )
+    assert cancellations["standard-valve"] == expected
+    assert order.open_units == 100 - expected
+
+
 def test_shipment_flow_is_conserved() -> None:
     company = build_northstar_company()
     scenario = build_baseline_scenario(horizon_days=20)
@@ -91,6 +179,27 @@ def test_full_reference_horizon_remains_financially_and_operationally_viable() -
     trace = simulate_trace(company, scenario, tape)
 
     assert len(trace.periods) == 515
+    assert [scenario.warmup_days, scenario.evaluation_days, scenario.runoff_days] == [
+        91,
+        364,
+        60,
+    ]
+    assert all(
+        sum(period.new_orders_units.values()) == 0
+        for period in trace.periods[-scenario.runoff_days :]
+    )
+    assert {period.phase for period in trace.periods[: scenario.warmup_days]} == {
+        "warmup"
+    }
+    assert {
+        period.phase
+        for period in trace.periods[
+            scenario.warmup_days : scenario.warmup_days + scenario.evaluation_days
+        ]
+    } == {"evaluation"}
+    assert {period.phase for period in trace.periods[-scenario.runoff_days :]} == {
+        "runoff"
+    }
     assert all(
         period.closing_material_inventory_units["steel"] > 0
         for period in trace.periods
@@ -99,3 +208,64 @@ def test_full_reference_horizon_remains_financially_and_operationally_viable() -
         trace.periods[-1].closing_revolver_debt_cents
         <= company.financial_policy.revolver_limit_cents
     )
+    assert all(
+        period.closing_cash_cents >= company.financial_policy.liquidity_floor_cents
+        for period in trace.periods
+    )
+    assert trace.engine_version == "0.1.0"
+    assert trace.scenario_schema_version == scenario.schema_version
+    assert trace.shock_tape_version == tape.tape_version
+    assert len(trace.resolved_assumptions_hash) == 64
+    assert len(trace.shock_tape_digest) == 64
+
+
+def test_trace_records_stochastic_commercial_outcomes() -> None:
+    company = build_northstar_company()
+    scenario = build_baseline_scenario(horizon_days=90)
+    tape = build_shock_tape(company, scenario, seed=20260716, replication_id=18)
+
+    trace = simulate_trace(company, scenario, tape)
+
+    order_totals = [sum(period.new_orders_units.values()) for period in trace.periods]
+    assert len(set(order_totals)) > 1
+    assert all(
+        0 <= factor <= 1
+        for period in trace.periods
+        for factor in period.retention_factor_by_segment.values()
+    )
+    assert any(
+        sum(period.lost_demand_units.values()) > 0 for period in trace.periods
+    )
+
+
+def test_overtime_cost_is_charged_to_the_cash_ledger() -> None:
+    company = build_northstar_company()
+    scenario = build_baseline_scenario(horizon_days=10).model_copy(
+        update={
+            "policy_levers": PolicyLevers(
+                resource_changes=tuple(
+                    ResourcePolicyChange(
+                        resource_id=resource.resource_id,
+                        regular_capacity_change=Decimal("-0.95"),
+                        overtime_capacity_minutes=resource.max_overtime_minutes,
+                    )
+                    for resource in company.plant.resources
+                )
+            )
+        }
+    )
+    tape = build_shock_tape(company, scenario, seed=20260716, replication_id=43)
+
+    trace = simulate_trace(company, scenario, tape)
+
+    resources = {
+        resource.resource_id: resource for resource in company.plant.resources
+    }
+    assert any(
+        sum(period.overtime_used_minutes.values()) > 0 for period in trace.periods
+    )
+    for period in trace.periods:
+        assert period.overtime_cost_cents == sum(
+            minutes * resources[resource_id].overtime_cost_cents_per_minute
+            for resource_id, minutes in period.overtime_used_minutes.items()
+        )

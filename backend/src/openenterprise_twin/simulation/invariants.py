@@ -1,7 +1,11 @@
 """Physical, order-flow and accounting invariants for every transition."""
 
 from openenterprise_twin.domain.errors import InvariantViolation
-from openenterprise_twin.domain.results import PeriodResult, SimulationTrace
+from openenterprise_twin.domain.results import (
+    PeriodResult,
+    SimulationTrace,
+    trace_content_digest,
+)
 
 
 def validate_period(period: PeriodResult) -> None:
@@ -13,10 +17,20 @@ def validate_period(period: PeriodResult) -> None:
         period.good_production_units,
         period.shipments_units,
         period.closing_finished_goods_units,
+        period.opening_wip_units,
+        period.production_start_units,
+        period.completed_production_units,
+        period.production_scrap_units,
+        period.closing_wip_units,
         period.opening_backlog_units,
         period.new_orders_units,
+        period.lost_demand_units,
         period.cancellations_units,
         period.closing_backlog_units,
+        period.new_orders_count,
+        period.fulfilled_orders_count,
+        period.otif_orders_count,
+        period.on_time_shipment_units,
     )
     for product_id in product_ids:
         if (
@@ -28,6 +42,41 @@ def validate_period(period: PeriodResult) -> None:
             _fail(
                 "finished_goods_conservation",
                 f"finished goods do not reconcile for '{product_id}'",
+            )
+        if (
+            period.opening_wip_units[product_id]
+            + period.production_start_units[product_id]
+            != period.completed_production_units[product_id]
+            + period.closing_wip_units[product_id]
+        ):
+            _fail(
+                "wip_conservation",
+                f"work in progress does not reconcile for '{product_id}'",
+            )
+        if (
+            period.good_production_units[product_id]
+            + period.production_scrap_units[product_id]
+            != period.completed_production_units[product_id]
+        ):
+            _fail(
+                "production_yield_conservation",
+                f"production yield does not reconcile for '{product_id}'",
+            )
+        if (
+            period.otif_orders_count[product_id]
+            > period.fulfilled_orders_count[product_id]
+        ):
+            _fail(
+                "otif_bound",
+                f"OTIF orders exceed fulfilled orders for '{product_id}'",
+            )
+        if (
+            period.on_time_shipment_units[product_id]
+            > period.shipments_units[product_id]
+        ):
+            _fail(
+                "on_time_shipment_bound",
+                f"on-time shipments exceed shipments for '{product_id}'",
             )
         if (
             period.opening_backlog_units[product_id]
@@ -61,13 +110,20 @@ def validate_period(period: PeriodResult) -> None:
             )
 
     _require_same_keys(
-        set(period.capacity_available_minutes), period.capacity_used_minutes
+        set(period.capacity_available_minutes),
+        period.capacity_used_minutes,
+        period.overtime_used_minutes,
     )
     for resource_id, used in period.capacity_used_minutes.items():
         if used > period.capacity_available_minutes[resource_id]:
             _fail(
                 "capacity_limit",
                 f"capacity use exceeds availability for '{resource_id}'",
+            )
+        if period.overtime_used_minutes[resource_id] > used:
+            _fail(
+                "overtime_bound",
+                f"overtime use exceeds total capacity use for '{resource_id}'",
             )
 
     expected_cash = (
@@ -76,6 +132,7 @@ def validate_period(period: PeriodResult) -> None:
         + period.revolver_draw_cents
         - period.supplier_payments_cents
         - period.conversion_cost_cents
+        - period.overtime_cost_cents
         - period.fixed_cost_cents
         - period.interest_paid_cents
         - period.capital_investment_cents
@@ -94,6 +151,8 @@ def validate_period(period: PeriodResult) -> None:
 
 
 def validate_trace(trace: SimulationTrace) -> None:
+    if trace_content_digest(trace) != trace.digest:
+        _fail("trace_digest", "trace content does not match its provenance digest")
     if not trace.periods:
         _fail("empty_trace", "a simulation trace must contain at least one period")
     for index, period in enumerate(trace.periods):
@@ -114,6 +173,13 @@ def validate_trace(trace: SimulationTrace) -> None:
             _fail("state_continuity", "backlog state is discontinuous")
         if previous.closing_cash_cents != period.opening_cash_cents:
             _fail("state_continuity", "cash state is discontinuous")
+        if (
+            previous.closing_revolver_debt_cents
+            != period.opening_revolver_debt_cents
+        ):
+            _fail("state_continuity", "debt state is discontinuous")
+        if previous.closing_wip_units != period.opening_wip_units:
+            _fail("state_continuity", "work-in-progress state is discontinuous")
 
 
 def _require_same_keys(expected: set[str], *mappings: dict[str, int]) -> None:

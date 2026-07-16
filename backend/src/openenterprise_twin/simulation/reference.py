@@ -141,12 +141,19 @@ def build_northstar_company() -> CompanyModel:
 
 
 def build_baseline_scenario(*, horizon_days: int = 515) -> Scenario:
+    if horizon_days == 515:
+        warmup_days, evaluation_days, runoff_days = 91, 364, 60
+    else:
+        warmup_days, evaluation_days, runoff_days = 0, horizon_days, 0
     return Scenario(
         scenario_id="current-plan",
         name="Current plan",
         company_model_version="0.1.0",
         schema_version="0.1.0",
         horizon_days=horizon_days,
+        warmup_days=warmup_days,
+        evaluation_days=evaluation_days,
+        runoff_days=runoff_days,
         policy_levers=PolicyLevers(),
     )
 

@@ -96,7 +96,7 @@ def test_company_models_are_frozen_and_forbid_unknown_fields(
     northstar_company: CompanyModel,
 ) -> None:
     with pytest.raises(ValidationError):
-        northstar_company.name = "Other company"  # type: ignore[misc]
+        northstar_company.name = "Other company"
 
     with pytest.raises(ValidationError):
         CompanyModel.model_validate({**northstar_company.model_dump(), "unknown": True})
