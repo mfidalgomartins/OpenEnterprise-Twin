@@ -11,12 +11,19 @@ requires-python = ">=3.12,<3.13"
 license = {text = "Apache-2.0"}
 authors = [{name = "OpenEnterprise Twin contributors"}]
 dependencies = [
+    "alembic>=1.14,<2",
+    "fastapi>=0.115,<1",
     "numpy>=2.2,<3",
     "pydantic>=2.10,<3",
+    "pydantic-settings>=2.7,<3",
+    "psycopg[binary,pool]>=3.2,<4",
+    "sqlalchemy>=2.0,<3",
+    "uvicorn[standard]>=0.34,<1",
 ]
 
 [project.optional-dependencies]
 dev = [
+    "httpx>=0.28,<1",
     "import-linter>=2.3,<3",
     "mypy>=1.15,<2",
     "pytest>=8.3,<9",
@@ -67,6 +74,16 @@ source_modules = [
     "openenterprise_twin.domain",
     "openenterprise_twin.simulation",
 ]
+forbidden_modules = [
+    "openenterprise_twin.api",
+    "openenterprise_twin.infrastructure",
+    "openenterprise_twin.persistence",
+]
+
+[[tool.importlinter.contracts]]
+name = "Plugin SDK remains independent from delivery infrastructure"
+type = "forbidden"
+source_modules = ["openenterprise_twin.plugins"]
 forbidden_modules = [
     "openenterprise_twin.api",
     "openenterprise_twin.infrastructure",
