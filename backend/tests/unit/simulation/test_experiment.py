@@ -49,6 +49,11 @@ def test_experiment_exposes_required_distributions_and_replications() -> None:
     assert result.baseline_scenario_id == request.scenario.baseline_scenario_id
     assert result.policy_levers == request.scenario.policy_levers
     assert result.decision_metric_rules == request.company.decision_policy.metric_rules
+    assert result.horizon_days == request.scenario.horizon_days
+    assert result.warmup_days == request.scenario.warmup_days
+    assert result.evaluation_days == request.scenario.evaluation_days
+    assert result.runoff_days == request.scenario.runoff_days
+    assert len(result.company_model_hash) == 64
     assert result.replication_count == 8
     assert result.company_model_version == "0.1.0"
     assert len(result.resolved_assumptions_hash) == 64

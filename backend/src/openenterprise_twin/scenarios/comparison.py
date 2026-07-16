@@ -3,8 +3,10 @@
 import json
 import math
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from hashlib import sha256
 from statistics import fmean, stdev
+from time import perf_counter
 from types import MappingProxyType
 from typing import Annotated, Literal, Self
 
@@ -23,8 +25,11 @@ from openenterprise_twin.domain.scenario import PolicyLevers
 from openenterprise_twin.simulation.experiment import (
     METRIC_NAMES,
     ExperimentResult,
+    MetricGuardrail,
     MetricName,
     PluginVersion,
+    ReplicationMetrics,
+    summarize_replication_metric,
     validate_experiment_result,
 )
 
@@ -49,10 +54,11 @@ _JOINT_PROBABILITY_NAMES: tuple[JointProbabilityName, ...] = (
 
 
 class MaterialityThreshold(DomainModel):
-    """Absolute mean-difference threshold for one metric."""
+    """Absolute threshold and improvement semantics for one metric."""
 
     metric_name: MetricName
     threshold: NonNegativeFloat
+    direction: ComparisonDirection | None = None
 
 
 class ComparisonPolicy(DomainModel):
@@ -77,6 +83,7 @@ DEFAULT_COMPARISON_POLICY = ComparisonPolicy(
                 if metric_name in {"otif", "cancellation_rate", "capacity_utilization"}
                 else 1.0
             ),
+            direction=("higher" if metric_name in _HIGHER_IS_BETTER else "lower"),
         )
         for metric_name in METRIC_NAMES
     )
@@ -114,8 +121,8 @@ class MetricComparison(DomainModel):
     baseline_breach_probability: Probability
     candidate_breach_probability: Probability
     mean_difference: FiniteFloat
-    ci95_lower: FiniteFloat
-    ci95_upper: FiniteFloat
+    ci95_lower: FiniteFloat | None
+    ci95_upper: FiniteFloat | None
     p5_difference: FiniteFloat
     p50_difference: FiniteFloat
     p95_difference: FiniteFloat
@@ -135,13 +142,28 @@ class ScenarioComparison(DomainModel):
     baseline_experiment_digest: Digest
     candidate_experiment_digest: Digest
     company_model_version: VersionString
+    company_model_hash: Digest
     scenario_schema_version: VersionString
     engine_version: VersionString
     shock_tape_version: VersionString
     baseline_plugin_versions: tuple[PluginVersion, ...]
     candidate_plugin_versions: tuple[PluginVersion, ...]
+    baseline_resolved_assumptions_hash: Digest
+    candidate_resolved_assumptions_hash: Digest
+    baseline_experiment_created_at: datetime
+    candidate_experiment_created_at: datetime
+    baseline_experiment_duration_seconds: NonNegativeFloat
+    candidate_experiment_duration_seconds: NonNegativeFloat
+    created_at: datetime
+    duration_seconds: NonNegativeFloat
     master_seed: Annotated[int, Field(ge=0)]
     replication_count: Annotated[int, Field(gt=0)]
+    horizon_days: Annotated[int, Field(gt=0)]
+    warmup_days: Annotated[int, Field(ge=0)]
+    evaluation_days: Annotated[int, Field(gt=0)]
+    runoff_days: Annotated[int, Field(ge=0)]
+    baseline_guardrails: tuple[MetricGuardrail, ...]
+    candidate_guardrails: tuple[MetricGuardrail, ...]
     policy: ComparisonPolicy
     paired_differences: tuple[PairedDifference, ...]
     metric_results: tuple[MetricComparison, ...]
@@ -166,6 +188,8 @@ def compare_experiments(
 ) -> ScenarioComparison:
     """Compare aligned outcomes using candidate-minus-baseline differences."""
 
+    created_at = datetime.now(UTC)
+    started_at = perf_counter()
     _validate_experiment_compatibility(baseline, candidate)
     validate_experiment_result(baseline)
     validate_experiment_result(candidate)
@@ -173,6 +197,10 @@ def compare_experiments(
     resolved_policy = _resolve_policy(policy, baseline.decision_metric_rules)
     thresholds = {
         item.metric_name: item.threshold
+        for item in resolved_policy.materiality_thresholds
+    }
+    directions = {
+        item.metric_name: item.direction
         for item in resolved_policy.materiality_thresholds
     }
     paired_differences = tuple(
@@ -208,6 +236,7 @@ def compare_experiments(
                 candidate.metrics[metric_name].breach_probability
             ),
             materiality_threshold=thresholds[metric_name],
+            direction=_required_direction(directions[metric_name]),
         )
         for metric_name in METRIC_NAMES
     )
@@ -220,13 +249,28 @@ def compare_experiments(
         baseline_experiment_digest=baseline.digest,
         candidate_experiment_digest=candidate.digest,
         company_model_version=baseline.company_model_version,
+        company_model_hash=baseline.company_model_hash,
         scenario_schema_version=baseline.scenario_schema_version,
         engine_version=baseline.engine_version,
         shock_tape_version=baseline.shock_tape_version,
         baseline_plugin_versions=baseline.plugin_versions,
         candidate_plugin_versions=candidate.plugin_versions,
+        baseline_resolved_assumptions_hash=baseline.resolved_assumptions_hash,
+        candidate_resolved_assumptions_hash=candidate.resolved_assumptions_hash,
+        baseline_experiment_created_at=baseline.created_at,
+        candidate_experiment_created_at=candidate.created_at,
+        baseline_experiment_duration_seconds=baseline.duration_seconds,
+        candidate_experiment_duration_seconds=candidate.duration_seconds,
+        created_at=created_at,
+        duration_seconds=perf_counter() - started_at,
         master_seed=baseline.master_seed,
         replication_count=baseline.replication_count,
+        horizon_days=baseline.horizon_days,
+        warmup_days=baseline.warmup_days,
+        evaluation_days=baseline.evaluation_days,
+        runoff_days=baseline.runoff_days,
+        baseline_guardrails=baseline.guardrails,
+        candidate_guardrails=candidate.guardrails,
         policy=resolved_policy,
         paired_differences=paired_differences,
         metric_results=metric_results,
@@ -250,6 +294,28 @@ def validate_scenario_comparison(comparison: ScenarioComparison) -> None:
         raise InvariantViolation(
             "scenario_comparison_replication_count",
             "comparison replication count does not match retained pairs",
+        )
+    if any(
+        timestamp.tzinfo is None
+        for timestamp in (
+            comparison.baseline_experiment_created_at,
+            comparison.candidate_experiment_created_at,
+            comparison.created_at,
+        )
+    ):
+        raise InvariantViolation(
+            "scenario_comparison_creation_time",
+            "comparison provenance times must be timezone-aware",
+        )
+    if (
+        comparison.warmup_days
+        + comparison.evaluation_days
+        + comparison.runoff_days
+        != comparison.horizon_days
+    ):
+        raise InvariantViolation(
+            "scenario_comparison_lifecycle",
+            "comparison lifecycle phases must sum to the horizon",
         )
     if tuple(
         paired.replication_id for paired in comparison.paired_differences
@@ -287,28 +353,64 @@ def validate_scenario_comparison(comparison: ScenarioComparison) -> None:
     if (
         tuple(item.metric_name for item in comparison.policy.materiality_thresholds)
         != METRIC_NAMES
+        or any(
+            item.direction is None
+            for item in comparison.policy.materiality_thresholds
+        )
     ):
         raise InvariantViolation(
             "scenario_comparison_policy_dimension",
             "comparison policy does not resolve every required metric",
+        )
+    if tuple(
+        item.metric_name for item in comparison.baseline_guardrails
+    ) != METRIC_NAMES or tuple(
+        item.metric_name for item in comparison.candidate_guardrails
+    ) != METRIC_NAMES:
+        raise InvariantViolation(
+            "scenario_comparison_guardrail_dimension",
+            "comparison guardrails do not match the required metric dimension",
         )
 
     thresholds = {
         item.metric_name: item.threshold
         for item in comparison.policy.materiality_thresholds
     }
+    directions = {
+        item.metric_name: item.direction
+        for item in comparison.policy.materiality_thresholds
+    }
+    baseline_replications = _source_replications(comparison, source="baseline")
+    candidate_replications = _source_replications(comparison, source="candidate")
+    baseline_guardrails = {
+        item.metric_name: item for item in comparison.baseline_guardrails
+    }
+    candidate_guardrails = {
+        item.metric_name: item for item in comparison.candidate_guardrails
+    }
     for actual in comparison.metric_results:
+        baseline_distribution = summarize_replication_metric(
+            metric_name=actual.metric_name,
+            replications=baseline_replications,
+            guardrail=baseline_guardrails[actual.metric_name],
+        )
+        candidate_distribution = summarize_replication_metric(
+            metric_name=actual.metric_name,
+            replications=candidate_replications,
+            guardrail=candidate_guardrails[actual.metric_name],
+        )
         expected = _summarize_metric_comparison(
             metric_name=actual.metric_name,
             differences=tuple(
                 paired.values[actual.metric_name]
                 for paired in comparison.paired_differences
             ),
-            baseline_mean=actual.baseline_mean,
-            candidate_mean=actual.candidate_mean,
-            baseline_breach_probability=actual.baseline_breach_probability,
-            candidate_breach_probability=actual.candidate_breach_probability,
+            baseline_mean=baseline_distribution.mean,
+            candidate_mean=candidate_distribution.mean,
+            baseline_breach_probability=baseline_distribution.breach_probability,
+            candidate_breach_probability=candidate_distribution.breach_probability,
             materiality_threshold=thresholds[actual.metric_name],
+            direction=_required_direction(directions[actual.metric_name]),
         )
         means_reconcile = math.isclose(
             actual.candidate_mean - actual.baseline_mean,
@@ -316,24 +418,7 @@ def validate_scenario_comparison(comparison: ScenarioComparison) -> None:
             rel_tol=1e-12,
             abs_tol=1e-12,
         )
-        source_means_reconcile = math.isclose(
-            actual.baseline_mean,
-            fmean(
-                paired.baseline_values[actual.metric_name]
-                for paired in comparison.paired_differences
-            ),
-            rel_tol=1e-12,
-            abs_tol=1e-12,
-        ) and math.isclose(
-            actual.candidate_mean,
-            fmean(
-                paired.candidate_values[actual.metric_name]
-                for paired in comparison.paired_differences
-            ),
-            rel_tol=1e-12,
-            abs_tol=1e-12,
-        )
-        if expected != actual or not means_reconcile or not source_means_reconcile:
+        if expected != actual or not means_reconcile:
             raise InvariantViolation(
                 "scenario_comparison_summary_reconciliation",
                 f"comparison summary does not reconcile for '{actual.metric_name}'",
@@ -373,6 +458,11 @@ def _validate_experiment_compatibility(
             "experiments must use the same company model version",
         ),
         (
+            baseline.company_model_hash == candidate.company_model_hash,
+            "scenario_comparison_company_model_hash",
+            "experiments must use the same resolved company model",
+        ),
+        (
             baseline.scenario_schema_version == candidate.scenario_schema_version,
             "scenario_comparison_scenario_schema_version",
             "experiments must use the same scenario schema version",
@@ -393,14 +483,37 @@ def _validate_experiment_compatibility(
             "experiments must use the same master seed",
         ),
         (
-            baseline.plugin_versions == candidate.plugin_versions,
+            _plugin_signature(baseline.plugin_versions)
+            == _plugin_signature(candidate.plugin_versions),
             "scenario_comparison_plugin_versions",
             "experiments must use identical plugin versions",
         ),
         (
-            baseline.decision_metric_rules == candidate.decision_metric_rules,
+            _decision_rule_signature(baseline.decision_metric_rules)
+            == _decision_rule_signature(candidate.decision_metric_rules),
             "scenario_comparison_decision_policy",
             "experiments must use identical company decision rules",
+        ),
+        (
+            (
+                baseline.horizon_days,
+                baseline.warmup_days,
+                baseline.evaluation_days,
+                baseline.runoff_days,
+            )
+            == (
+                candidate.horizon_days,
+                candidate.warmup_days,
+                candidate.evaluation_days,
+                candidate.runoff_days,
+            ),
+            "scenario_comparison_lifecycle",
+            "experiments must use the same simulation lifecycle",
+        ),
+        (
+            baseline.guardrails == candidate.guardrails,
+            "scenario_comparison_guardrails",
+            "experiments must use identical metric guardrails",
         ),
         (
             baseline.replication_count == candidate.replication_count,
@@ -428,10 +541,6 @@ def _resolve_policy(
     policy: ComparisonPolicy | None,
     company_rules: tuple[DecisionMetricRule, ...],
 ) -> ComparisonPolicy:
-    overrides = {
-        item.metric_name: item
-        for item in (policy or ComparisonPolicy()).materiality_thresholds
-    }
     defaults = {
         item.metric_name: item
         for item in DEFAULT_COMPARISON_POLICY.materiality_thresholds
@@ -441,12 +550,19 @@ def _resolve_policy(
             item.metric_name: MaterialityThreshold(
                 metric_name=item.metric_name,
                 threshold=float(item.materiality_threshold),
+                direction=item.improvement_direction,
             )
             for item in company_rules
             if item.metric_name in METRIC_NAMES
         }
     )
-    defaults.update(overrides)
+    for override in (policy or ComparisonPolicy()).materiality_thresholds:
+        inherited = defaults[override.metric_name]
+        defaults[override.metric_name] = MaterialityThreshold(
+            metric_name=override.metric_name,
+            threshold=override.threshold,
+            direction=override.direction or inherited.direction,
+        )
     return ComparisonPolicy(
         materiality_thresholds=tuple(defaults[name] for name in METRIC_NAMES)
     )
@@ -461,6 +577,7 @@ def _summarize_metric_comparison(
     baseline_breach_probability: float,
     candidate_breach_probability: float,
     materiality_threshold: float,
+    direction: ComparisonDirection,
 ) -> MetricComparison:
     sample = np.asarray(differences, dtype=np.float64)
     if sample.ndim != 1 or sample.size == 0 or not np.isfinite(sample).all():
@@ -468,18 +585,18 @@ def _summarize_metric_comparison(
 
     mean_difference = fmean(differences)
     if len(differences) == 1:
-        margin = 0.0
+        ci95_lower = None
+        ci95_upper = None
     else:
         margin = (
             _NORMAL_95_CRITICAL_VALUE * stdev(differences) / math.sqrt(len(differences))
         )
+        ci95_lower = mean_difference - margin
+        ci95_upper = mean_difference + margin
     p5, p50, p95 = np.quantile(
         sample,
         [0.05, 0.50, 0.95],
         method="linear",
-    )
-    direction: ComparisonDirection = (
-        "higher" if metric_name in _HIGHER_IS_BETTER else "lower"
     )
     improvements = sample > 0.0 if direction == "higher" else sample < 0.0
     return MetricComparison(
@@ -490,15 +607,54 @@ def _summarize_metric_comparison(
         baseline_breach_probability=baseline_breach_probability,
         candidate_breach_probability=candidate_breach_probability,
         mean_difference=mean_difference,
-        ci95_lower=mean_difference - margin,
-        ci95_upper=mean_difference + margin,
+        ci95_lower=ci95_lower,
+        ci95_upper=ci95_upper,
         p5_difference=float(p5),
         p50_difference=float(p50),
         p95_difference=float(p95),
         probability_of_improvement=float(np.count_nonzero(improvements) / sample.size),
         materiality_threshold=materiality_threshold,
-        is_material=abs(mean_difference) >= materiality_threshold,
+        is_material=abs(mean_difference) > materiality_threshold,
     )
+
+
+def _source_replications(
+    comparison: ScenarioComparison,
+    *,
+    source: Literal["baseline", "candidate"],
+) -> tuple[ReplicationMetrics, ...]:
+    return tuple(
+        ReplicationMetrics(
+            replication_id=paired.replication_id,
+            trace_digest="0" * 64,
+            metric_entries=(
+                paired.baseline_metric_entries
+                if source == "baseline"
+                else paired.candidate_metric_entries
+            ),
+        )
+        for paired in comparison.paired_differences
+    )
+
+
+def _plugin_signature(
+    plugins: tuple[PluginVersion, ...],
+) -> tuple[tuple[str, str], ...]:
+    return tuple(sorted((plugin.plugin_id, plugin.version) for plugin in plugins))
+
+
+def _decision_rule_signature(
+    rules: tuple[DecisionMetricRule, ...],
+) -> tuple[DecisionMetricRule, ...]:
+    return tuple(sorted(rules, key=lambda rule: rule.metric_name))
+
+
+def _required_direction(
+    direction: ComparisonDirection | None,
+) -> ComparisonDirection:
+    if direction is None:
+        raise ValueError("resolved comparison policy must define a direction")
+    return direction
 
 
 def _joint_probabilities(

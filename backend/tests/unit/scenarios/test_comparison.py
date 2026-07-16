@@ -8,6 +8,7 @@ from typing import cast
 
 import pytest
 
+from openenterprise_twin.domain.company import DecisionMetricRule
 from openenterprise_twin.domain.errors import InvariantViolation
 from openenterprise_twin.domain.scenario import PolicyLevers
 from openenterprise_twin.scenarios.comparison import (
@@ -120,12 +121,17 @@ def _build_experiment(
         scenario_schema_version="0.1.0",
         engine_version="0.1.0",
         shock_tape_version="0.1.0",
+        company_model_hash=sha256(b"northstar-company").hexdigest(),
         resolved_assumptions_hash=sha256(scenario_id.encode()).hexdigest(),
         plugin_versions=(PluginVersion(plugin_id="core.simulation", version="0.1.0"),),
         master_seed=master_seed,
         replication_count=replication_count,
         created_at=datetime(2026, 7, 16, tzinfo=UTC),
         duration_seconds=1.0,
+        horizon_days=30,
+        warmup_days=0,
+        evaluation_days=30,
+        runoff_days=0,
         guardrails=guardrails,
         replications=replications,
         metric_results=metric_results,
@@ -224,8 +230,8 @@ def test_singleton_paired_ci_collapses_to_observed_difference() -> None:
     revenue = compare_experiments(baseline, candidate).metrics["revenue"]
 
     assert revenue.mean_difference == 10.0
-    assert revenue.ci95_lower == 10.0
-    assert revenue.ci95_upper == 10.0
+    assert revenue.ci95_lower is None
+    assert revenue.ci95_upper is None
     assert revenue.p5_difference == 10.0
     assert revenue.p50_difference == 10.0
     assert revenue.p95_difference == 10.0
@@ -281,6 +287,45 @@ def test_materiality_defaults_are_typed_auditable_and_overridable() -> None:
     assert material.metrics["revenue"].materiality_threshold == 7.0
     assert material.metrics["revenue"].is_material
     assert len(material.policy.materiality_thresholds) == len(METRIC_NAMES)
+
+
+def test_zero_difference_is_not_material_with_zero_threshold() -> None:
+    baseline, candidate = _experiments()
+    comparison = compare_experiments(
+        baseline,
+        candidate,
+        ComparisonPolicy(
+            materiality_thresholds=(
+                MaterialityThreshold(
+                    metric_name="rescue_funding",
+                    threshold=0.0,
+                ),
+            )
+        ),
+    )
+
+    assert comparison.metrics["rescue_funding"].mean_difference == 0.0
+    assert comparison.metrics["rescue_funding"].is_material is False
+
+
+def test_company_improvement_direction_is_applied() -> None:
+    baseline, candidate = _experiments()
+    rules = (
+        DecisionMetricRule(
+            metric_name="capacity_utilization",
+            materiality_threshold=Decimal("0.001"),
+            improvement_direction="higher",
+        ),
+    )
+    baseline = _rehash(baseline, decision_metric_rules=rules)
+    candidate = _rehash(candidate, decision_metric_rules=rules)
+
+    comparison = compare_experiments(baseline, candidate)
+
+    assert comparison.metrics["capacity_utilization"].direction == "higher"
+    assert comparison.metrics[
+        "capacity_utilization"
+    ].probability_of_improvement == pytest.approx(0.5)
 
 
 @pytest.mark.parametrize(
@@ -347,6 +392,36 @@ def test_comparison_rejects_different_plugin_versions() -> None:
     assert error.value.code == "scenario_comparison_plugin_versions"
 
 
+def test_comparison_accepts_same_plugins_in_different_order() -> None:
+    baseline, candidate = _experiments()
+    plugins = (
+        PluginVersion(plugin_id="alpha", version="0.1.0"),
+        PluginVersion(plugin_id="beta", version="0.1.0"),
+    )
+    baseline = _rehash(baseline, plugin_versions=plugins)
+    candidate = _rehash(candidate, plugin_versions=tuple(reversed(plugins)))
+
+    comparison = compare_experiments(baseline, candidate)
+
+    assert comparison.replication_count == baseline.replication_count
+
+
+def test_comparison_rejects_different_lifecycle_contract() -> None:
+    baseline, candidate = _experiments()
+    candidate = _rehash(
+        candidate,
+        horizon_days=515,
+        warmup_days=91,
+        evaluation_days=364,
+        runoff_days=60,
+    )
+
+    with pytest.raises(InvariantViolation) as error:
+        compare_experiments(baseline, candidate)
+
+    assert error.value.code == "scenario_comparison_lifecycle"
+
+
 def test_comparison_rejects_non_aligned_replication_ids() -> None:
     baseline, candidate = _experiments()
     candidate = _rehash(
@@ -370,7 +445,10 @@ def test_comparison_is_deterministic_and_collections_are_immutable() -> None:
     first = compare_experiments(baseline, candidate)
     second = compare_experiments(baseline, candidate)
 
-    assert first == second
+    assert first.metric_results == second.metric_results
+    assert first.paired_differences == second.paired_differences
+    assert first.policy == second.policy
+    assert first.joint_probability_entries == second.joint_probability_entries
     assert isinstance(first.metric_results, tuple)
     assert isinstance(first.paired_differences, tuple)
     with pytest.raises(TypeError):
@@ -415,6 +493,28 @@ def test_validation_rejects_tampered_source_means_after_rehash() -> None:
             "baseline_mean": comparison.metric_results[0].baseline_mean + 1.0,
             "candidate_mean": comparison.metric_results[0].candidate_mean + 1.0,
         }
+    )
+    tampered = comparison.model_copy(
+        update={
+            "metric_results": (revenue, *comparison.metric_results[1:]),
+            "digest": "0" * 64,
+        }
+    )
+    tampered = tampered.model_copy(
+        update={"digest": comparison_content_digest(tampered)}
+    )
+
+    with pytest.raises(InvariantViolation) as error:
+        validate_scenario_comparison(tampered)
+
+    assert error.value.code == "scenario_comparison_summary_reconciliation"
+
+
+def test_validation_rejects_tampered_breach_probability_after_rehash() -> None:
+    baseline, candidate = _experiments()
+    comparison = compare_experiments(baseline, candidate)
+    revenue = comparison.metric_results[0].model_copy(
+        update={"candidate_breach_probability": 0.75}
     )
     tampered = comparison.model_copy(
         update={

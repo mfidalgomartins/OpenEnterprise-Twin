@@ -86,6 +86,12 @@ def test_recommendation_cites_only_computed_metric_evidence() -> None:
         outcome.metric_name in comparison.metrics for outcome in brief.outcome_deltas
     )
     assert brief.provenance.comparison_digest == comparison.digest
+    assert brief.provenance.baseline_plugin_versions
+    assert brief.provenance.candidate_plugin_versions
+    assert len(brief.provenance.baseline_resolved_assumptions_hash) == 64
+    assert len(brief.provenance.candidate_resolved_assumptions_hash) == 64
+    assert brief.provenance.created_at.tzinfo is not None
+    assert brief.provenance.duration_seconds >= 0
     assert brief.digest == brief_content_digest(brief)
 
 
@@ -111,13 +117,75 @@ def test_liquidity_breach_prevents_unqualified_recommendation() -> None:
     )
 
 
+def test_worse_rescue_mean_is_visible_when_breach_probabilities_are_saturated() -> None:
+    company = build_northstar_company()
+    company = company.model_copy(
+        update={
+            "financial_policy": company.financial_policy.model_copy(
+                update={"opening_cash_cents": 5_000_000, "revolver_limit_cents": 0}
+            )
+        }
+    )
+    baseline_scenario = build_baseline_scenario(horizon_days=5)
+    baseline_scenario = baseline_scenario.model_copy(
+        update={
+            "policy_levers": PolicyLevers(
+                one_off_capital_investment_cents=50_000_000
+            )
+        }
+    )
+    candidate_scenario = baseline_scenario.model_copy(
+        update={
+            "scenario_id": "deeper-liquidity-stress",
+            "name": "Deeper liquidity stress",
+            "baseline_scenario_id": baseline_scenario.scenario_id,
+            "policy_levers": PolicyLevers(
+                one_off_capital_investment_cents=100_000_000
+            ),
+        }
+    )
+    baseline = run_experiment(
+        ExperimentRequest(
+            company=company,
+            scenario=baseline_scenario,
+            master_seed=7,
+            replications=3,
+        )
+    )
+    candidate = run_experiment(
+        ExperimentRequest(
+            company=company,
+            scenario=candidate_scenario,
+            master_seed=7,
+            replications=3,
+        )
+    )
+    comparison = compare_experiments(baseline, candidate)
+
+    brief = build_executive_brief(comparison)
+    rescue = comparison.metrics["rescue_funding"]
+
+    assert rescue.baseline_breach_probability == 1.0
+    assert rescue.candidate_breach_probability == 1.0
+    assert rescue.mean_difference > rescue.materiality_threshold
+    assert brief.decision_status == "conditional"
+    assert any(
+        constraint.metric_name == "rescue_funding"
+        for constraint in brief.constraints
+    )
+
+
 def test_brief_is_deterministic_and_collections_are_immutable() -> None:
     comparison = _comparison()
 
     first = build_executive_brief(comparison)
     second = build_executive_brief(comparison)
 
-    assert first == second
+    assert first.decision_status == second.decision_status
+    assert first.recommendation == second.recommendation
+    assert first.outcome_deltas == second.outcome_deltas
+    assert first.mechanisms == second.mechanisms
+    assert first.constraints == second.constraints
     assert isinstance(first.outcome_deltas, tuple)
     assert isinstance(first.mechanisms, tuple)
     immutable_outcomes = cast(list[object], first.outcome_deltas)

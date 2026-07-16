@@ -103,6 +103,8 @@ class ExperimentRequest(DomainModel):
         plugin_ids = [plugin.plugin_id for plugin in self.plugin_versions]
         if len(plugin_ids) != len(set(plugin_ids)):
             raise ValueError("experiment plugin versions must have unique identifiers")
+        if {"core.simulation", "core.metrics"} & set(plugin_ids):
+            raise ValueError("core plugin identifiers are reserved")
         validate_scenario_against_company(self.scenario, self.company)
         return self
 
@@ -135,6 +137,7 @@ class ExperimentResult(DomainModel):
     scenario_schema_version: VersionString
     engine_version: VersionString
     shock_tape_version: VersionString
+    company_model_hash: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
     resolved_assumptions_hash: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
     plugin_versions: tuple[PluginVersion, ...]
     decision_metric_rules: tuple[DecisionMetricRule, ...] = ()
@@ -142,6 +145,10 @@ class ExperimentResult(DomainModel):
     replication_count: Annotated[int, Field(gt=0)]
     created_at: datetime
     duration_seconds: Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
+    horizon_days: Annotated[int, Field(gt=0)]
+    warmup_days: NonNegativeInt
+    evaluation_days: Annotated[int, Field(gt=0)]
+    runoff_days: NonNegativeInt
     guardrails: tuple[MetricGuardrail, ...]
     replications: tuple[ReplicationMetrics, ...]
     metric_results: tuple[MetricResult, ...]
@@ -177,7 +184,7 @@ def run_experiment(request: ExperimentRequest) -> ExperimentResult:
     metric_results = tuple(
         MetricResult(
             metric_name=metric_name,
-            distribution=_summarize_metric(
+            distribution=summarize_replication_metric(
                 metric_name=metric_name,
                 replications=replications,
                 guardrail=rules[metric_name],
@@ -194,6 +201,7 @@ def run_experiment(request: ExperimentRequest) -> ExperimentResult:
         scenario_schema_version=request.scenario.schema_version,
         engine_version=ENGINE_VERSION,
         shock_tape_version=TAPE_VERSION,
+        company_model_hash=_company_model_digest(request.company),
         resolved_assumptions_hash=_assumptions_digest(request),
         plugin_versions=_resolved_plugin_versions(request),
         decision_metric_rules=request.company.decision_policy.metric_rules,
@@ -201,6 +209,10 @@ def run_experiment(request: ExperimentRequest) -> ExperimentResult:
         replication_count=request.replications,
         created_at=created_at,
         duration_seconds=perf_counter() - started_at,
+        horizon_days=request.scenario.horizon_days,
+        warmup_days=request.scenario.warmup_days,
+        evaluation_days=request.scenario.evaluation_days,
+        runoff_days=request.scenario.runoff_days,
         guardrails=tuple(rules[name] for name in METRIC_NAMES),
         replications=replications,
         metric_results=metric_results,
@@ -252,18 +264,34 @@ def validate_experiment_result(result: ExperimentResult) -> None:
             "experiment_creation_time",
             "experiment creation time must be timezone-aware",
         )
+    if (
+        result.warmup_days + result.evaluation_days + result.runoff_days
+        != result.horizon_days
+    ):
+        raise InvariantViolation(
+            "experiment_lifecycle",
+            "experiment lifecycle phases must sum to the horizon",
+        )
     plugin_ids = [plugin.plugin_id for plugin in result.plugin_versions]
     if len(plugin_ids) != len(set(plugin_ids)):
         raise InvariantViolation(
             "experiment_plugin_versions",
             "experiment plugin versions must have unique identifiers",
         )
+    decision_metrics = [
+        rule.metric_name for rule in result.decision_metric_rules
+    ]
+    if len(decision_metrics) != len(set(decision_metrics)):
+        raise InvariantViolation(
+            "experiment_decision_policy",
+            "experiment decision rules must target unique metrics",
+        )
 
     guardrails = {
         guardrail.metric_name: guardrail for guardrail in result.guardrails
     }
     for metric_result in result.metric_results:
-        expected = _summarize_metric(
+        expected = summarize_replication_metric(
             metric_name=metric_result.metric_name,
             replications=result.replications,
             guardrail=guardrails[metric_result.metric_name],
@@ -468,10 +496,15 @@ def _resolved_plugin_versions(
         PluginVersion(plugin_id="core.simulation", version=ENGINE_VERSION),
         PluginVersion(plugin_id="core.metrics", version=ENGINE_VERSION),
     )
-    return (*core, *request.plugin_versions)
+    return tuple(
+        sorted(
+            (*core, *request.plugin_versions),
+            key=lambda plugin: (plugin.plugin_id, plugin.version),
+        )
+    )
 
 
-def _summarize_metric(
+def summarize_replication_metric(
     *,
     metric_name: MetricName,
     replications: tuple[ReplicationMetrics, ...],
@@ -497,3 +530,12 @@ def _summarize_metric(
     return distribution.model_copy(
         update={"breach_probability": breaches / len(replications)}
     )
+
+
+def _company_model_digest(company: CompanyModel) -> str:
+    canonical = json.dumps(
+        company.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return sha256(canonical).hexdigest()
