@@ -61,6 +61,8 @@ class Product(DomainModel):
     name: DisplayName
     standard_price_cents: PositiveMoneyCents
     standard_unit_cost_cents: MoneyCents
+    opening_finished_goods_units: Annotated[int, Field(ge=0)]
+    production_lead_time_days: Annotated[int, Field(gt=0, le=365)]
     yield_rate: Annotated[Decimal, Field(gt=Decimal("0"), le=Decimal("1"))]
     resource_requirements: Annotated[
         tuple[ResourceRequirement, ...], Field(min_length=1)
@@ -100,6 +102,9 @@ class CustomerSegment(DomainModel):
     churn_probability: Probability
     cancellation_probability: Probability
     order_dispersion: PositiveDecimal
+    mean_order_size: Annotated[int, Field(gt=0)]
+    promised_lead_time_days: Annotated[int, Field(ge=0, le=365)]
+    cancellation_grace_days: Annotated[int, Field(ge=0, le=365)]
     payment_terms_days: Annotated[int, Field(ge=0, le=365)]
     service_reputation_sensitivity: Probability
 

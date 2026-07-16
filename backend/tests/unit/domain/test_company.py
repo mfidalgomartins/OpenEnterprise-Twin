@@ -16,8 +16,10 @@ def test_company_accepts_integer_operating_units(
     northstar_company: CompanyModel,
 ) -> None:
     assert northstar_company.products[0].standard_price_cents == 12000
+    assert northstar_company.products[0].opening_finished_goods_units == 220
     assert northstar_company.plant.resources[1].daily_capacity_minutes == 1050
     assert len(northstar_company.plant.materials) == 2
+    assert northstar_company.customer_segments[0].promised_lead_time_days == 3
 
 
 def test_company_rejects_fractional_money_cents(
@@ -84,7 +86,7 @@ def test_financial_policy_requires_cash_target_above_floor(
     northstar_company: CompanyModel,
 ) -> None:
     payload = deepcopy(northstar_company.model_dump())
-    payload["financial_policy"]["cash_target_cents"] = 10_000_000
+    payload["financial_policy"]["cash_target_cents"] = 4_000_000
 
     with pytest.raises(ValidationError, match="cash_target"):
         CompanyModel.model_validate(payload)
