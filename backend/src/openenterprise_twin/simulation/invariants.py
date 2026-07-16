@@ -28,8 +28,13 @@ def validate_period(period: PeriodResult) -> None:
         period.cancellations_units,
         period.closing_backlog_units,
         period.new_orders_count,
+        period.cancelled_orders_count,
         period.fulfilled_orders_count,
         period.otif_orders_count,
+        period.fulfilled_evaluation_orders_count,
+        period.otif_evaluation_orders_count,
+        period.cancelled_evaluation_orders_count,
+        period.closing_evaluation_backlog_orders_count,
         period.on_time_shipment_units,
     )
     for product_id in product_ids:
@@ -69,6 +74,18 @@ def validate_period(period: PeriodResult) -> None:
             _fail(
                 "otif_bound",
                 f"OTIF orders exceed fulfilled orders for '{product_id}'",
+            )
+        if (
+            period.fulfilled_evaluation_orders_count[product_id]
+            > period.fulfilled_orders_count[product_id]
+            or period.otif_evaluation_orders_count[product_id]
+            > period.otif_orders_count[product_id]
+            or period.cancelled_evaluation_orders_count[product_id]
+            > period.cancelled_orders_count[product_id]
+        ):
+            _fail(
+                "evaluation_order_bound",
+                f"evaluation order outcomes exceed total outcomes for '{product_id}'",
             )
         if (
             period.on_time_shipment_units[product_id]
@@ -180,6 +197,25 @@ def validate_trace(trace: SimulationTrace) -> None:
             _fail("state_continuity", "debt state is discontinuous")
         if previous.closing_wip_units != period.opening_wip_units:
             _fail("state_continuity", "work-in-progress state is discontinuous")
+
+    evaluation_created = sum(
+        sum(period.new_orders_count.values())
+        for period in trace.periods
+        if period.phase == "evaluation"
+    )
+    evaluation_resolved = sum(
+        sum(period.fulfilled_evaluation_orders_count.values())
+        + sum(period.cancelled_evaluation_orders_count.values())
+        for period in trace.periods
+    )
+    evaluation_open = sum(
+        trace.periods[-1].closing_evaluation_backlog_orders_count.values()
+    )
+    if evaluation_created != evaluation_resolved + evaluation_open:
+        _fail(
+            "evaluation_order_conservation",
+            "evaluation orders do not reconcile through the runoff period",
+        )
 
 
 def _require_same_keys(expected: set[str], *mappings: dict[str, int]) -> None:

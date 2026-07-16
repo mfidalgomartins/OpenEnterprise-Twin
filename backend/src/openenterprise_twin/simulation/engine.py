@@ -15,6 +15,7 @@ from openenterprise_twin.domain.company import (
 from openenterprise_twin.domain.errors import DomainValidationError
 from openenterprise_twin.domain.results import (
     PeriodResult,
+    Phase,
     SimulationTrace,
     trace_content_digest,
 )
@@ -60,7 +61,11 @@ class _Order:
     open_units: int
     unit_price_cents: int
     order_count: int
+    unit_size: int
+    origin_phase: Phase
     shipped_units: int = 0
+    fulfilled_order_count: int = 0
+    cancelled_order_count: int = 0
     all_shipments_on_time: bool = True
 
 
@@ -134,8 +139,16 @@ def simulate_trace(
         lost_demand = {product_id: 0 for product_id in products}
         cancellations = {product_id: 0 for product_id in products}
         new_orders_count = {product_id: 0 for product_id in products}
+        cancelled_orders_count = {product_id: 0 for product_id in products}
         fulfilled_orders_count = {product_id: 0 for product_id in products}
         otif_orders_count = {product_id: 0 for product_id in products}
+        fulfilled_evaluation_orders_count = {
+            product_id: 0 for product_id in products
+        }
+        otif_evaluation_orders_count = {product_id: 0 for product_id in products}
+        cancelled_evaluation_orders_count = {
+            product_id: 0 for product_id in products
+        }
         on_time_shipment_units = {product_id: 0 for product_id in products}
 
         # Supplier receipts precede production completions by contract.
@@ -200,11 +213,19 @@ def simulate_trace(
             shock=shock,
             fulfilled_orders_count=fulfilled_orders_count,
             otif_orders_count=otif_orders_count,
+            fulfilled_evaluation_orders_count=(
+                fulfilled_evaluation_orders_count
+            ),
+            otif_evaluation_orders_count=otif_evaluation_orders_count,
             on_time_shipment_units=on_time_shipment_units,
         )
         _cancel_overdue_orders(
             orders=orders,
             cancellations=cancellations,
+            cancelled_orders_count=cancelled_orders_count,
+            cancelled_evaluation_orders_count=(
+                cancelled_evaluation_orders_count
+            ),
             segments=segments,
             shock=shock,
             day_index=day_index,
@@ -327,8 +348,19 @@ def simulate_trace(
             cancellations_units=cancellations,
             closing_backlog_units=_backlog_by_product(orders, products),
             new_orders_count=new_orders_count,
+            cancelled_orders_count=cancelled_orders_count,
             fulfilled_orders_count=fulfilled_orders_count,
             otif_orders_count=otif_orders_count,
+            fulfilled_evaluation_orders_count=(
+                fulfilled_evaluation_orders_count
+            ),
+            otif_evaluation_orders_count=otif_evaluation_orders_count,
+            cancelled_evaluation_orders_count=(
+                cancelled_evaluation_orders_count
+            ),
+            closing_evaluation_backlog_orders_count=(
+                _evaluation_backlog_orders_by_product(orders, products)
+            ),
             on_time_shipment_units=on_time_shipment_units,
             retention_factor_by_segment=retention_factors.copy(),
             opening_material_inventory_units=opening_material_inventory,
@@ -519,6 +551,8 @@ def _create_orders(
                     open_units=units,
                     unit_price_cents=unit_price_cents,
                     order_count=order_count,
+                    unit_size=segment.mean_order_size,
+                    origin_phase=scenario.phase_for_day(day_index),
                 )
             )
             next_order_id += 1
@@ -538,6 +572,8 @@ def _ship_orders(
     shock: DailyShock,
     fulfilled_orders_count: dict[str, int],
     otif_orders_count: dict[str, int],
+    fulfilled_evaluation_orders_count: dict[str, int],
+    otif_evaluation_orders_count: dict[str, int],
     on_time_shipment_units: dict[str, int],
 ) -> tuple[int, int]:
     payment_changes = {
@@ -551,6 +587,7 @@ def _ship_orders(
         if shipped == 0:
             continue
         order.open_units -= shipped
+        fulfilled_before = order.fulfilled_order_count
         order.shipped_units += shipped
         if day_index > order.due_day:
             order.all_shipments_on_time = False
@@ -570,12 +607,21 @@ def _ship_orders(
                 shock.collection_delay_uniform(order.segment_id)
             )
         )
-        due_day = max(day_index, due_day)
+        # Same-day collections have already run in the fixed chronology.
+        due_day = max(day_index + 1, due_day)
         receivables[due_day] = receivables.get(due_day, 0) + invoice
-        if order.open_units == 0:
-            fulfilled_orders_count[order.product_id] += order.order_count
-            if order.all_shipments_on_time:
-                otif_orders_count[order.product_id] += order.order_count
+        eligible_orders = order.order_count - order.cancelled_order_count
+        order.fulfilled_order_count = min(
+            eligible_orders, order.shipped_units // order.unit_size
+        )
+        newly_fulfilled = order.fulfilled_order_count - fulfilled_before
+        fulfilled_orders_count[order.product_id] += newly_fulfilled
+        if order.origin_phase == "evaluation":
+            fulfilled_evaluation_orders_count[order.product_id] += newly_fulfilled
+        if order.all_shipments_on_time:
+            otif_orders_count[order.product_id] += newly_fulfilled
+            if order.origin_phase == "evaluation":
+                otif_evaluation_orders_count[order.product_id] += newly_fulfilled
     return revenue, cogs
 
 
@@ -583,6 +629,8 @@ def _cancel_overdue_orders(
     *,
     orders: list[_Order],
     cancellations: dict[str, int],
+    cancelled_orders_count: dict[str, int],
+    cancelled_evaluation_orders_count: dict[str, int],
     segments: dict[str, CustomerSegment],
     shock: DailyShock,
     day_index: int,
@@ -593,18 +641,33 @@ def _cancel_overdue_orders(
             grouped.setdefault((order.product_id, order.segment_id), []).append(order)
 
     for (product_id, segment_id), overdue_orders in grouped.items():
-        overdue_units = sum(order.open_units for order in overdue_orders)
-        cancelled_units = binomial_quantile(
-            trials=overdue_units,
+        overdue_order_count = sum(
+            _open_order_count(order) for order in overdue_orders
+        )
+        cancelled_order_count = binomial_quantile(
+            trials=overdue_order_count,
             probability=float(segments[segment_id].cancellation_probability),
             uniform=shock.cancellation_binomial_uniform(product_id, segment_id),
         )
-        cancellations[product_id] += cancelled_units
-        remaining = cancelled_units
+        cancelled_orders_count[product_id] += cancelled_order_count
+        remaining = cancelled_order_count
         for order in sorted(overdue_orders, key=lambda item: item.order_id):
-            cancelled = min(order.open_units, remaining)
-            order.open_units -= cancelled
-            remaining -= cancelled
+            order_count = min(_open_order_count(order), remaining)
+            if order_count == 0:
+                continue
+            partial_units = order.shipped_units % order.unit_size
+            untouched_orders = _open_order_count(order) - (1 if partial_units else 0)
+            untouched_cancelled = min(order_count, untouched_orders)
+            cancelled_units = untouched_cancelled * order.unit_size
+            if order_count > untouched_cancelled:
+                cancelled_units += order.unit_size - partial_units
+            cancelled_units = min(cancelled_units, order.open_units)
+            order.open_units -= cancelled_units
+            order.cancelled_order_count += order_count
+            cancellations[product_id] += cancelled_units
+            if order.origin_phase == "evaluation":
+                cancelled_evaluation_orders_count[product_id] += order_count
+            remaining -= order_count
             if remaining == 0:
                 break
 
@@ -716,6 +779,25 @@ def _backlog_by_product(
     result = {product_id: 0 for product_id in products}
     for order in orders:
         result[order.product_id] += order.open_units
+    return result
+
+
+def _open_order_count(order: _Order) -> int:
+    return max(
+        0,
+        order.order_count
+        - order.fulfilled_order_count
+        - order.cancelled_order_count,
+    )
+
+
+def _evaluation_backlog_orders_by_product(
+    orders: list[_Order], products: dict[str, Product]
+) -> dict[str, int]:
+    result = {product_id: 0 for product_id in products}
+    for order in orders:
+        if order.origin_phase == "evaluation":
+            result[order.product_id] += _open_order_count(order)
     return result
 
 

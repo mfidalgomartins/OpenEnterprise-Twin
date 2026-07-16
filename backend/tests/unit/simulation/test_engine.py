@@ -10,6 +10,7 @@ from openenterprise_twin.simulation.demand import (
 from openenterprise_twin.simulation.engine import (
     _cancel_overdue_orders,
     _Order,
+    _ship_orders,
     simulate_trace,
 )
 from openenterprise_twin.simulation.reference import (
@@ -128,24 +129,97 @@ def test_overdue_cancellation_uses_conditional_binomial_draw() -> None:
         open_units=100,
         unit_price_cents=10_000,
         order_count=10,
+        unit_size=10,
+        origin_phase="evaluation",
     )
     cancellations = {product.product_id: 0 for product in company.products}
+    cancelled_orders = {product.product_id: 0 for product in company.products}
+    cancelled_evaluation_orders = {
+        product.product_id: 0 for product in company.products
+    }
 
     _cancel_overdue_orders(
         orders=[order],
         cancellations=cancellations,
+        cancelled_orders_count=cancelled_orders,
+        cancelled_evaluation_orders_count=cancelled_evaluation_orders,
         segments={segment.segment_id: segment},
         shock=shock,
         day_index=1,
     )
 
     expected = binomial_quantile(
-        100,
+        10,
         float(segment.cancellation_probability),
         shock.cancellation_binomial_uniform("standard-valve", segment.segment_id),
     )
-    assert cancellations["standard-valve"] == expected
-    assert order.open_units == 100 - expected
+    assert cancellations["standard-valve"] == expected * order.unit_size
+    assert cancelled_orders["standard-valve"] == expected
+    assert cancelled_evaluation_orders["standard-valve"] == expected
+    assert order.open_units == 100 - expected * order.unit_size
+
+
+def test_partial_cancellation_cannot_be_reported_as_fulfilled_or_otif() -> None:
+    company = build_northstar_company()
+    product = company.products[0]
+    segment = company.customer_segments[0].model_copy(
+        update={"payment_terms_days": 0}
+    )
+    scenario = build_baseline_scenario(horizon_days=2)
+    base_shock = build_shock_tape(
+        company, scenario, seed=20260716, replication_id=734
+    ).days[0]
+    collection_entries = tuple(
+        (segment_id, 0.0 if segment_id == segment.segment_id else uniform)
+        for segment_id, uniform in base_shock.collection_delay_uniform_entries
+    )
+    shock = base_shock.model_copy(
+        update={"collection_delay_uniform_entries": collection_entries}
+    )
+    order = _Order(
+        order_id=1,
+        product_id=product.product_id,
+        segment_id=segment.segment_id,
+        order_day=0,
+        due_day=0,
+        grace_days=0,
+        original_units=100,
+        open_units=80,
+        unit_price_cents=10_000,
+        order_count=10,
+        unit_size=10,
+        origin_phase="evaluation",
+        cancelled_order_count=2,
+    )
+    fulfilled = {product.product_id: 0}
+    otif = {product.product_id: 0}
+    fulfilled_evaluation = {product.product_id: 0}
+    otif_evaluation = {product.product_id: 0}
+    on_time_units = {product.product_id: 0}
+    receivables: dict[int, int] = {}
+
+    _ship_orders(
+        orders=[order],
+        finished_goods={product.product_id: 80},
+        shipments={product.product_id: 0},
+        products={product.product_id: product},
+        segments={segment.segment_id: segment},
+        scenario=scenario,
+        day_index=0,
+        receivables=receivables,
+        shock=shock,
+        fulfilled_orders_count=fulfilled,
+        otif_orders_count=otif,
+        fulfilled_evaluation_orders_count=fulfilled_evaluation,
+        otif_evaluation_orders_count=otif_evaluation,
+        on_time_shipment_units=on_time_units,
+    )
+
+    assert fulfilled[product.product_id] == 8
+    assert otif[product.product_id] == 8
+    assert fulfilled_evaluation[product.product_id] == 8
+    assert otif_evaluation[product.product_id] == 8
+    assert receivables == {1: 800_000}
 
 
 def test_shipment_flow_is_conserved() -> None:
@@ -200,6 +274,22 @@ def test_full_reference_horizon_remains_financially_and_operationally_viable() -
     assert {period.phase for period in trace.periods[-scenario.runoff_days :]} == {
         "runoff"
     }
+    created_evaluation_orders = sum(
+        sum(period.new_orders_count.values())
+        for period in trace.periods
+        if period.phase == "evaluation"
+    )
+    resolved_evaluation_orders = sum(
+        sum(period.fulfilled_evaluation_orders_count.values())
+        + sum(period.cancelled_evaluation_orders_count.values())
+        for period in trace.periods
+    )
+    open_evaluation_orders = sum(
+        trace.periods[-1].closing_evaluation_backlog_orders_count.values()
+    )
+    assert created_evaluation_orders == (
+        resolved_evaluation_orders + open_evaluation_orders
+    )
     assert all(
         period.closing_material_inventory_units["steel"] > 0
         for period in trace.periods
