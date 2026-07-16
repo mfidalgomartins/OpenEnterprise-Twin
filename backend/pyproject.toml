@@ -29,6 +29,9 @@ packages = ["src/openenterprise_twin"]
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+    "performance: long-running functional performance validation",
+]
 
 [tool.ruff]
 target-version = "py312"

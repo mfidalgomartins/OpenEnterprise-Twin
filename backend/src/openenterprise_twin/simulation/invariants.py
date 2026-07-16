@@ -146,6 +146,7 @@ def validate_period(period: PeriodResult) -> None:
     expected_cash = (
         period.opening_cash_cents
         + period.collections_cents
+        + period.rescue_funding_cents
         + period.revolver_draw_cents
         - period.supplier_payments_cents
         - period.conversion_cost_cents

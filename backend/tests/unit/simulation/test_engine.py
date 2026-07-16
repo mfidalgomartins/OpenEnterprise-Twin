@@ -359,3 +359,33 @@ def test_overtime_cost_is_charged_to_the_cash_ledger() -> None:
             minutes * resources[resource_id].overtime_cost_cents_per_minute
             for resource_id, minutes in period.overtime_used_minutes.items()
         )
+
+
+def test_rescue_funding_mode_is_auditable_and_preserves_cash_reconciliation() -> None:
+    company = build_northstar_company().model_copy(
+        update={
+            "financial_policy": build_northstar_company().financial_policy.model_copy(
+                update={
+                    "opening_cash_cents": 5_000_000,
+                    "revolver_limit_cents": 0,
+                }
+            )
+        }
+    )
+    scenario = build_baseline_scenario(horizon_days=3).model_copy(
+        update={
+            "policy_levers": PolicyLevers(
+                one_off_capital_investment_cents=10_000_000
+            )
+        }
+    )
+    tape = build_shock_tape(company, scenario, seed=20260716, replication_id=44)
+
+    trace = simulate_trace(company, scenario, tape, allow_rescue_funding=True)
+
+    assert trace.rescue_funding_enabled is True
+    assert sum(period.rescue_funding_cents for period in trace.periods) > 0
+    assert all(
+        period.closing_cash_cents >= company.financial_policy.liquidity_floor_cents
+        for period in trace.periods
+    )

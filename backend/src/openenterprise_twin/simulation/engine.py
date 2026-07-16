@@ -85,7 +85,11 @@ class _PurchaseOrder:
 
 
 def simulate_trace(
-    company: CompanyModel, scenario: Scenario, shock_tape: ShockTape
+    company: CompanyModel,
+    scenario: Scenario,
+    shock_tape: ShockTape,
+    *,
+    allow_rescue_funding: bool = False,
 ) -> SimulationTrace:
     """Simulate one auditable trace; randomness may enter only through the tape."""
 
@@ -183,6 +187,7 @@ def simulate_trace(
             opening_debt_cents=debt_cents,
             policy=company.financial_policy,
             allow_repayment=False,
+            allow_rescue_funding=allow_rescue_funding,
         )
         cash_cents = obligation_financing.closing_cash_cents
         debt_cents = obligation_financing.closing_debt_cents
@@ -311,12 +316,17 @@ def simulate_trace(
             cash_before_financing_cents=cash_before_financing,
             opening_debt_cents=debt_cents,
             policy=company.financial_policy,
+            allow_rescue_funding=allow_rescue_funding,
         )
         cash_cents = financing.closing_cash_cents
         debt_cents = financing.closing_debt_cents
         revolver_draw_cents = obligation_financing.draw_cents + financing.draw_cents
         revolver_repayment_cents = (
             obligation_financing.repayment_cents + financing.repayment_cents
+        )
+        rescue_funding_cents = (
+            obligation_financing.rescue_funding_cents
+            + financing.rescue_funding_cents
         )
 
         retention_factors = _update_retention_factors(
@@ -378,6 +388,7 @@ def simulate_trace(
             fixed_cost_cents=fixed_cost_cents,
             interest_paid_cents=interest_paid_cents,
             capital_investment_cents=capital_investment_cents,
+            rescue_funding_cents=rescue_funding_cents,
             revolver_draw_cents=revolver_draw_cents,
             revolver_repayment_cents=revolver_repayment_cents,
             closing_cash_cents=cash_cents,
@@ -401,6 +412,7 @@ def simulate_trace(
         scenario_schema_version=scenario.schema_version,
         engine_version=ENGINE_VERSION,
         shock_tape_version=shock_tape.tape_version,
+        rescue_funding_enabled=allow_rescue_funding,
         scenario_id=scenario.scenario_id,
         seed=shock_tape.seed,
         replication_id=shock_tape.replication_id,

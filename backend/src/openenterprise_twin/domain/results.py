@@ -60,6 +60,7 @@ class PeriodResult(DomainModel):
     fixed_cost_cents: NonNegativeInt
     interest_paid_cents: NonNegativeInt
     capital_investment_cents: NonNegativeInt
+    rescue_funding_cents: NonNegativeInt
     revolver_draw_cents: NonNegativeInt
     revolver_repayment_cents: NonNegativeInt
     closing_cash_cents: NonNegativeInt
@@ -76,6 +77,7 @@ class SimulationTrace(DomainModel):
     scenario_schema_version: VersionString
     engine_version: VersionString
     shock_tape_version: VersionString
+    rescue_funding_enabled: bool
     scenario_id: Identifier
     seed: NonNegativeInt
     replication_id: NonNegativeInt

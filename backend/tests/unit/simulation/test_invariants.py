@@ -30,6 +30,7 @@ def test_cash_reconciles_to_cent() -> None:
         expected_cash = (
             period.opening_cash_cents
             + period.collections_cents
+            + period.rescue_funding_cents
             + period.revolver_draw_cents
             - period.supplier_payments_cents
             - period.conversion_cost_cents
