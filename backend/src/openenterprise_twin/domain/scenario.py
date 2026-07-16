@@ -1,5 +1,6 @@
 """Typed, scoped scenario metadata and policy changes."""
 
+from collections.abc import Collection
 from decimal import Decimal
 from typing import Annotated, Self
 
@@ -118,20 +119,58 @@ def validate_scenario_against_company(
             "scenario company_model_version does not match company model"
         )
 
-    segments = {segment.segment_id for segment in company.customer_segments}
-    products = {product.product_id for product in company.products}
-    resources = {resource.resource_id for resource in company.plant.resources}
-    materials = {material.material_id for material in company.plant.materials}
+    segments = {
+        segment.segment_id: segment for segment in company.customer_segments
+    }
+    products = {product.product_id: product for product in company.products}
+    resources = {
+        resource.resource_id: resource for resource in company.plant.resources
+    }
+    materials = {
+        material.material_id: material for material in company.plant.materials
+    }
 
     for price_change in scenario.policy_levers.price_changes:
         _assert_known(price_change.segment_id, segments, "unknown customer segment")
         _assert_known(price_change.product_id, products, "unknown product")
+        product = products[price_change.product_id]
+        profile_segments = {
+            profile.segment_id for profile in product.demand_profiles
+        }
+        if price_change.segment_id not in profile_segments:
+            raise DomainValidationError(
+                f"product '{price_change.product_id}' has no demand profile for "
+                f"segment '{price_change.segment_id}'"
+            )
+        if Decimal(product.standard_price_cents) * (
+            Decimal("1") + price_change.price_change
+        ) <= 0:
+            raise DomainValidationError("price change must preserve a positive price")
     for resource_change in scenario.policy_levers.resource_changes:
         _assert_known(resource_change.resource_id, resources, "unknown resource")
+        resource = resources[resource_change.resource_id]
+        if resource_change.overtime_capacity_minutes > resource.max_overtime_minutes:
+            raise DomainValidationError(
+                f"overtime cap for resource '{resource_change.resource_id}' is "
+                f"{resource.max_overtime_minutes} minutes"
+            )
     for material_change in scenario.policy_levers.material_changes:
         _assert_known(material_change.material_id, materials, "unknown material")
+        material = materials[material_change.material_id]
+        if Decimal(material.unit_cost_milli_cents) * (
+            Decimal("1") + material_change.supplier_unit_cost_change
+        ) <= 0:
+            raise DomainValidationError(
+                "material change must preserve a positive supplier cost"
+            )
     for payment_change in scenario.policy_levers.payment_term_changes:
         _assert_known(payment_change.segment_id, segments, "unknown customer segment")
+        segment = segments[payment_change.segment_id]
+        effective_terms = segment.payment_terms_days + payment_change.change_days
+        if not 0 <= effective_terms <= 365:
+            raise DomainValidationError(
+                "effective customer payment terms must remain between 0 and 365 days"
+            )
 
 
 def _require_unique_targets(values: list[object], message: str) -> None:
@@ -139,6 +178,6 @@ def _require_unique_targets(values: list[object], message: str) -> None:
         raise DomainValidationError(message)
 
 
-def _assert_known(value: str, known: set[str], label: str) -> None:
+def _assert_known(value: str, known: Collection[str], label: str) -> None:
     if value not in known:
         raise DomainValidationError(f"{label} '{value}'")

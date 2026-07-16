@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 from tests.factories import build_northstar_company
 
+from openenterprise_twin.domain.company import CompanyModel
 from openenterprise_twin.domain.errors import DomainValidationError
 from openenterprise_twin.domain.scenario import (
     MaterialPolicyChange,
@@ -90,6 +91,90 @@ def test_scenario_accepts_scoped_enterprise_policy() -> None:
 
     validate_scenario_against_company(scenario, build_northstar_company())
     assert scenario.policy_levers.resource_changes[0].resource_id == "test"
+
+
+def test_scenario_rejects_overtime_above_resource_cap() -> None:
+    scenario = build_scenario(
+        PolicyLevers(
+            resource_changes=(
+                ResourcePolicyChange(
+                    resource_id="test",
+                    overtime_capacity_minutes=241,
+                ),
+            )
+        )
+    )
+
+    with pytest.raises(DomainValidationError, match="overtime cap"):
+        validate_scenario_against_company(scenario, build_northstar_company())
+
+
+def test_scenario_rejects_effective_payment_terms_outside_bounds() -> None:
+    scenario = build_scenario(
+        PolicyLevers(
+            payment_term_changes=(
+                SegmentPaymentTermChange(segment_id="contracted", change_days=-46),
+            )
+        )
+    )
+
+    with pytest.raises(DomainValidationError, match="payment terms"):
+        validate_scenario_against_company(scenario, build_northstar_company())
+
+
+def test_scenario_rejects_price_change_without_demand_profile() -> None:
+    company_payload = build_northstar_company().model_dump()
+    company_payload["products"][0]["demand_profiles"] = company_payload["products"][0][
+        "demand_profiles"
+    ][:1]
+    company = CompanyModel.model_validate(company_payload)
+    scenario = build_scenario(
+        PolicyLevers(
+            price_changes=(
+                SegmentProductPriceChange(
+                    segment_id="spot",
+                    product_id="standard-valve",
+                    price_change=Decimal("0.05"),
+                ),
+            )
+        )
+    )
+
+    with pytest.raises(DomainValidationError, match="no demand profile"):
+        validate_scenario_against_company(scenario, company)
+
+
+def test_scenario_rejects_nonpositive_effective_price() -> None:
+    scenario = build_scenario(
+        PolicyLevers(
+            price_changes=(
+                SegmentProductPriceChange(
+                    segment_id="contracted",
+                    product_id="standard-valve",
+                    price_change=Decimal("-1"),
+                ),
+            )
+        )
+    )
+
+    with pytest.raises(DomainValidationError, match="positive price"):
+        validate_scenario_against_company(scenario, build_northstar_company())
+
+
+def test_scenario_rejects_nonpositive_effective_supplier_cost() -> None:
+    scenario = build_scenario(
+        PolicyLevers(
+            material_changes=(
+                MaterialPolicyChange(
+                    material_id="steel",
+                    supplier_unit_cost_change=Decimal("-1"),
+                ),
+            )
+        )
+    )
+
+    with pytest.raises(DomainValidationError, match="positive supplier cost"):
+        validate_scenario_against_company(scenario, build_northstar_company())
 
 
 def test_scenario_rejects_itself_as_baseline() -> None:
