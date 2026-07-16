@@ -133,7 +133,7 @@ git commit -m "feat: establish typed enterprise domain"
 - Produces: `simulate_trace(company, scenario, shock_tape) -> SimulationTrace`.
 - Produces: `validate_trace(trace) -> None`, raising `InvariantViolation` with a stable code.
 
-- [ ] **Step 1: Write deterministic and conservation tests**
+- [x] **Step 1: Write deterministic and conservation tests**
 
 ```python
 def test_same_seed_produces_identical_trace():
@@ -150,25 +150,25 @@ def test_shipments_never_exceed_available_orders_and_backlog(simulation_trace):
         assert period.shipped_units <= period.opening_backlog + period.new_orders
 ```
 
-- [ ] **Step 2: Confirm tests fail before implementation**
+- [x] **Step 2: Confirm tests fail before implementation**
 
 Run: `cd backend && python -m pytest tests/unit/simulation -q`  
 Expected: collection fails on missing simulation modules.
 
-- [ ] **Step 3: Implement the period transition**
+- [x] **Step 3: Implement the period transition**
 
 Implement the fixed daily order defined by the design specification. Demand uses segment/product elasticity, correlated AR(1) multipliers and negative-binomial arrivals; operations allocate finished goods, material and capacity; finance recognizes shipment revenue and settles working capital. Business transitions consume the supplied immutable stochastic tape and cannot generate random values.
 
-- [ ] **Step 4: Implement and enforce invariants**
+- [x] **Step 4: Implement and enforce invariants**
 
 Required checks: non-negative inventory/backlog/cash-flow components, shipment flow conservation, production bounded by material and effective hours, and closing-cash reconciliation within `Decimal("0.01")`.
 
-- [ ] **Step 5: Verify the engine**
+- [x] **Step 5: Verify the engine**
 
 Run: `cd backend && python -m pytest tests/unit/simulation -q`  
 Expected: deterministic and invariant tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/src/openenterprise_twin backend/tests/unit/simulation
