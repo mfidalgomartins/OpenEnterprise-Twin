@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "import-linter>=2.3,<3",
     "mypy>=1.15,<2",
     "pytest>=8.3,<9",
     "ruff>=0.9,<1",
@@ -55,3 +56,19 @@ show_error_codes = true
 init_forbid_extra = true
 init_typed = true
 warn_required_dynamic_aliases = true
+
+[tool.importlinter]
+root_packages = ["openenterprise_twin"]
+
+[[tool.importlinter.contracts]]
+name = "Core analytics remains independent from delivery infrastructure"
+type = "forbidden"
+source_modules = [
+    "openenterprise_twin.domain",
+    "openenterprise_twin.simulation",
+]
+forbidden_modules = [
+    "openenterprise_twin.api",
+    "openenterprise_twin.infrastructure",
+    "openenterprise_twin.persistence",
+]
