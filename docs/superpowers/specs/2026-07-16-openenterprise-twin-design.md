@@ -36,19 +36,19 @@ The product does not claim to predict the future. Every result is conditional on
 
 ## Demonstration company
 
-The included demo company, **Northstar Components**, produces two industrial components for three customer segments across contracted and spot channels.
+The included demo company, **Northstar Components**, is a synthetic €4–5 million B2B manufacturer producing three flow-control components for contracted and spot channels.
 
 ### Commercial system
 
-- Segments: strategic accounts, core accounts and spot buyers.
-- Products: precision module and control assembly.
+- Segments: contracted accounts and spot buyers.
+- Products: standard valve, intelligent valve and repair cartridge.
 - Demand depends on baseline volume, seasonality, price elasticity, commercial investment and service reputation.
 - Contracted customers have lower elasticity and churn; spot buyers have higher elasticity and order volatility.
 - Lost service reduces next-period demand through a bounded reputation effect.
 
 ### Operating system
 
-- One plant with two work centres and finite effective hours.
+- One plant with assembly and test work centres and finite effective minutes.
 - Product-specific cycle times and contribution margins.
 - Shared component inventory with stochastic supplier lead time.
 - Unfulfilled demand becomes backlog subject to cancellation.
@@ -64,41 +64,46 @@ The included demo company, **Northstar Components**, produces two industrial com
 
 ## Simulation model
 
-The simulation advances in monthly periods. Within each period, modules execute in a fixed order:
+The simulation uses a daily hybrid state-transition and discrete-event model. Currency is stored in euro cents, capacity in minutes, products and modules in integer units, steel in grams and dates as calendar-day indices. Within each operating day, modules execute in a fixed order:
 
-1. update exogenous conditions and seasonality;
-2. generate demand by segment and product;
-3. convert demand to orders and add backlog;
-4. receive inbound supply;
-5. allocate materials and effective capacity;
-6. produce and ship orders using priority rules;
-7. calculate service, cancellations and reputation;
-8. recognize revenue, cost and working-capital movements;
-9. settle receivables and payables;
-10. update the immutable period snapshot.
+1. receive supplier deliveries due that day;
+2. complete work in progress and realize production yield;
+3. collect receivables, pay obligations and apply financing rules;
+4. realize demand, capacity and supplier stochastic states;
+5. generate orders at the previously decided price;
+6. allocate finished goods by earliest due date and stable order ID;
+7. cancel orders beyond their tolerated lateness;
+8. decide and start production, consuming materials immediately;
+9. place supplier purchase orders;
+10. accrue revenue, cost, operating expense and interest;
+11. set the following week's policies on weekly decision days;
+12. write an immutable end-of-day ledger and state snapshot.
 
-The engine produces one `SimulationTrace` per iteration and an aggregated `ExperimentResult` across iterations. Each trace must pass accounting and flow-conservation checks before aggregation.
+The standard run contains a 91-day warm-up, a 364-day evaluation period and a 60-day runoff with no new demand, allowing orders near the cutoff to be classified correctly. The engine produces one `SimulationTrace` per iteration and an aggregated `ExperimentResult` across iterations. Each trace must pass accounting and flow-conservation checks before aggregation.
 
 ### Stochastic elements
 
-- Demand shocks: correlated log-normal shocks by segment.
+- Demand shocks: correlated, normalized AR(1) market and product processes.
+- Order arrivals: negative-binomial counts with segment-specific dispersion.
 - Supplier lead time: discrete bounded distribution.
 - Yield: beta distribution bounded by product-specific quality floors.
 - Cancellation: binomial draw conditional on backlog age.
 - Collections delay: discrete draw around contractual payment terms.
 
-Randomness is provided through a seeded NumPy generator passed explicitly to each model. Modules must never use global random state.
+Randomness is generated outside business transitions as a versioned stochastic tape. Stable draw keys combine master seed, replication, process, day, entity and draw identifier. Scenario comparisons use common random numbers and inverse-CDF transforms, ensuring policy changes do not shift unrelated random streams. Modules must never use global random state.
 
 ### Primary outcomes
 
 - Revenue, EBITDA and free cash flow.
 - Closing cash and probability of a liquidity floor breach.
 - Gross margin and return on invested working capital.
-- On-time-in-full service level and backlog.
+- Immediate fill rate, unit on-time delivery, order-level OTIF, cancellation and backlog.
 - Capacity utilization, overtime and material availability.
 - Customer retention proxy and lost demand.
 
-For each metric, the result includes mean, median, P10, P90, standard deviation and probability of crossing its configured guardrail.
+For each metric, the result includes mean, median, P5, P10, P90, P95, standard deviation and probability of crossing its configured guardrail. Downside summaries include EBITDA CVaR, cash-at-risk, rescue-funding probability and peak revolver exposure.
+
+Scenario comparison uses paired differences by replication rather than differences between independent sample means. Results include the mean paired difference, confidence interval, P5/P50/P95, probability of improvement and joint probabilities such as improving EBITDA without reducing OTIF.
 
 ## Scenario semantics
 
