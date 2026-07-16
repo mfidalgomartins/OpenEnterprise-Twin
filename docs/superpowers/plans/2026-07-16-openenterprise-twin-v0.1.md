@@ -190,7 +190,7 @@ git commit -m "feat: add reproducible enterprise simulation"
 - Produces: `run_experiment(request: ExperimentRequest) -> ExperimentResult`.
 - Produces: `MetricDistribution(mean, median, p5, p10, p90, p95, standard_deviation, breach_probability, cvar95)`.
 
-- [ ] **Step 1: Write aggregation and reproducibility tests**
+- [x] **Step 1: Write aggregation and reproducibility tests**
 
 ```python
 def test_experiment_exposes_required_percentiles(experiment_result):
@@ -203,21 +203,21 @@ def test_experiment_seed_is_reproducible(experiment_request):
     assert run_experiment(experiment_request) == run_experiment(experiment_request)
 ```
 
-- [ ] **Step 2: Confirm tests fail**
+- [x] **Step 2: Confirm tests fail**
 
 Run: `cd backend && python -m pytest tests/unit/simulation/test_experiment.py -q`  
 Expected: module import fails.
 
-- [ ] **Step 3: Implement vector-friendly aggregation**
+- [x] **Step 3: Implement vector-friendly aggregation**
 
 Generate stable stochastic tapes using a counter-based NumPy `Philox` generator, execute traces with bounded parallelism, reject invalid traces and aggregate `revenue`, `ebitda`, `free_cash_flow`, `closing_cash`, `otif`, `cancellation_rate`, `backlog_units`, `capacity_utilization`, `peak_revolver` and `rescue_funding`.
 
-- [ ] **Step 4: Add the 1,000 × 24 benchmark**
+- [x] **Step 4: Add the 1,000 × 24 benchmark**
 
 Run: `cd backend && python -m pytest tests/performance/test_experiment_benchmark.py -q --benchmark-disable`  
 Expected: the functional benchmark completes and returns 1,000 valid 515-day iterations; CI records elapsed time without using a brittle hard failure threshold.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/src/openenterprise_twin/simulation backend/tests
