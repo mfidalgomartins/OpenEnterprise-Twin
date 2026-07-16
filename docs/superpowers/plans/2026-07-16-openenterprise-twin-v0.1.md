@@ -76,7 +76,7 @@ openenterprise-twin/
 - Produces: `CompanyModel`, `Product`, `CustomerSegment`, `Plant`, `FinancialPolicy`, `Scenario`, `PolicyLevers`.
 - Produces: immutable Pydantic models with `extra="forbid"` and bounded numeric fields.
 
-- [ ] **Step 1: Write domain validation tests**
+- [x] **Step 1: Write domain validation tests**
 
 ```python
 def test_company_rejects_non_positive_capacity(northstar_company):
@@ -91,21 +91,21 @@ def test_policy_levers_reject_impossible_rates():
         PolicyLevers(price_change=Decimal("-1.01"))
 ```
 
-- [ ] **Step 2: Run tests and confirm the models do not exist**
+- [x] **Step 2: Run tests and confirm the models do not exist**
 
 Run: `cd backend && python -m pytest tests/unit/domain -q`  
 Expected: collection fails because `openenterprise_twin.domain` is unavailable.
 
-- [ ] **Step 3: Implement the immutable domain models**
+- [x] **Step 3: Implement the immutable domain models**
 
 Use `ConfigDict(frozen=True, extra="forbid")`, `Decimal` for monetary rates and explicit constraints: rates in `[-1, 10]`, probabilities in `[0, 1]`, physical quantities strictly positive where required.
 
-- [ ] **Step 4: Verify domain tests and static checks**
+- [x] **Step 4: Verify domain tests and static checks**
 
 Run: `cd backend && python -m pytest tests/unit/domain -q && python -m ruff check src tests && python -m mypy src`  
 Expected: all commands succeed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add .gitignore LICENSE backend
