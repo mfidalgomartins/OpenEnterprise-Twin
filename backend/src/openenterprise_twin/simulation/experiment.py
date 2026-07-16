@@ -13,6 +13,7 @@ from pydantic import Field, model_validator
 
 from openenterprise_twin.domain.company import (
     CompanyModel,
+    DisplayName,
     DomainModel,
     Identifier,
     VersionString,
@@ -20,6 +21,7 @@ from openenterprise_twin.domain.company import (
 from openenterprise_twin.domain.errors import InvariantViolation
 from openenterprise_twin.domain.results import SimulationTrace
 from openenterprise_twin.domain.scenario import (
+    PolicyLevers,
     Scenario,
     validate_scenario_against_company,
 )
@@ -125,6 +127,9 @@ class ExperimentResult(DomainModel):
     """Auditable distributions and replication-level values for one scenario."""
 
     scenario_id: Identifier
+    scenario_name: DisplayName
+    baseline_scenario_id: Identifier | None
+    policy_levers: PolicyLevers
     company_model_version: VersionString
     scenario_schema_version: VersionString
     engine_version: VersionString
@@ -180,6 +185,9 @@ def run_experiment(request: ExperimentRequest) -> ExperimentResult:
     )
     result = ExperimentResult(
         scenario_id=request.scenario.scenario_id,
+        scenario_name=request.scenario.name,
+        baseline_scenario_id=request.scenario.baseline_scenario_id,
+        policy_levers=request.scenario.policy_levers,
         company_model_version=request.company.model_version,
         scenario_schema_version=request.scenario.schema_version,
         engine_version=ENGINE_VERSION,

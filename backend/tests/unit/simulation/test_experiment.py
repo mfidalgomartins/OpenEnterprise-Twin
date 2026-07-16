@@ -41,9 +41,13 @@ def build_request(*, max_workers: int = 1) -> ExperimentRequest:
 
 
 def test_experiment_exposes_required_distributions_and_replications() -> None:
-    result = run_experiment(build_request())
+    request = build_request()
+    result = run_experiment(request)
 
     assert set(result.metrics) == REQUIRED_METRICS
+    assert result.scenario_name == request.scenario.name
+    assert result.baseline_scenario_id == request.scenario.baseline_scenario_id
+    assert result.policy_levers == request.scenario.policy_levers
     assert result.replication_count == 8
     assert result.company_model_version == "0.1.0"
     assert len(result.resolved_assumptions_hash) == 64
