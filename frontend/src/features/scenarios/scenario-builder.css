@@ -1,0 +1,419 @@
+.scenario-builder {
+  padding-block: var(--space-8) var(--space-12);
+}
+
+.scenario-builder__header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-8);
+  padding-block-end: var(--space-8);
+  border-block-end: 0.0625rem solid var(--color-line);
+}
+
+.scenario-builder__header h1,
+.scenario-builder__header p,
+.scenario-builder__header dl,
+.scenario-builder__header dt,
+.scenario-builder__header dd {
+  margin: 0;
+}
+
+.scenario-builder__header h1,
+.scenario-builder-state h1 {
+  font-size: var(--text-report);
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+}
+
+.scenario-builder__header > div > p {
+  max-width: 66ch;
+  margin-block-start: var(--space-3);
+  color: var(--color-muted);
+}
+
+.scenario-builder__header dl {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--space-6);
+  font-variant-numeric: tabular-nums;
+}
+
+.scenario-builder__header dt {
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+
+.scenario-builder__header dd {
+  margin-block-start: var(--space-1);
+  font-size: var(--text-ui);
+  font-weight: 500;
+}
+
+.scenario-builder__layout {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.scenario-builder__form,
+.scenario-builder__rail {
+  min-width: 0;
+}
+
+.scenario-builder__identity {
+  display: grid;
+  gap: var(--space-2);
+  padding-block: var(--space-8);
+}
+
+.scenario-builder__identity label,
+.scenario-builder__execution label {
+  font-size: var(--text-ui);
+  font-weight: 600;
+}
+
+.scenario-builder__identity input,
+.scenario-builder__execution input,
+.policy-lever input {
+  min-height: 2.75rem;
+  border: 0.0625rem solid var(--color-line);
+  border-radius: var(--radius-control);
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+.scenario-builder__identity input {
+  width: min(100%, 36rem);
+  padding-inline: var(--space-3);
+}
+
+.scenario-builder__identity p,
+.scenario-builder__execution p,
+.policy-lever__error {
+  margin: 0;
+  color: var(--color-risk) !important;
+  font-size: var(--text-meta) !important;
+}
+
+.scenario-builder__group,
+.scenario-builder__execution {
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-8) 0 0;
+  border: 0;
+  border-block-start: 0.0625rem solid var(--color-line);
+}
+
+.scenario-builder__group legend,
+.scenario-builder__execution legend {
+  padding: 0;
+  font-size: var(--text-section);
+  font-weight: 600;
+}
+
+.scenario-builder__group > p {
+  margin: var(--space-2) 0 var(--space-6);
+  color: var(--color-muted);
+}
+
+.policy-lever {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(12rem, 0.8fr) minmax(12rem, 1.2fr) minmax(14rem, 0.8fr);
+  gap: var(--space-4) var(--space-6);
+  align-items: center;
+  padding-block: var(--space-4);
+  border-block-start: 0.0625rem solid var(--color-line);
+}
+
+.policy-lever__heading {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.policy-lever__heading label {
+  font-size: var(--text-ui);
+  font-weight: 600;
+}
+
+.policy-lever__heading span {
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+
+.policy-lever--changed .policy-lever__heading span {
+  color: var(--color-decision);
+  font-weight: 600;
+}
+
+.policy-lever > p:not(.policy-lever__error) {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--text-ui);
+}
+
+.policy-lever__control {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.policy-lever__control input {
+  width: 100%;
+  padding: 0 5.5rem 0 var(--space-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.policy-lever__control > span {
+  position: absolute;
+  inset-inline-end: var(--space-3);
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  pointer-events: none;
+}
+
+.policy-lever__values {
+  display: flex;
+  grid-column: 1 / -1;
+  gap: var(--space-8);
+  margin: 0;
+}
+
+.policy-lever__values div {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.policy-lever__values dt,
+.policy-lever__values dd {
+  margin: 0;
+  font-size: var(--text-meta);
+}
+
+.policy-lever__values dt {
+  color: var(--color-muted);
+}
+
+.policy-lever__values dd {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.policy-lever__error {
+  grid-column: 1 / -1;
+}
+
+.scenario-builder__execution {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(10rem, 1fr));
+  gap: var(--space-6);
+  margin-block-start: var(--space-8);
+}
+
+.scenario-builder__execution legend {
+  margin-block-end: var(--space-4);
+}
+
+.scenario-builder__execution > div {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.scenario-builder__execution input {
+  width: 100%;
+  padding-inline: var(--space-3);
+}
+
+.scenario-builder__submit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding-block: var(--space-8);
+}
+
+.scenario-builder__submit p,
+.scenario-builder__submit strong,
+.scenario-builder__submit span {
+  display: block;
+  margin: 0;
+}
+
+.scenario-builder__submit strong {
+  font-size: var(--text-ui);
+}
+
+.scenario-builder__submit span {
+  margin-block-start: var(--space-1);
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+
+.scenario-builder__submit button {
+  min-width: 11rem;
+  min-height: 2.75rem;
+  padding-inline: var(--space-6);
+  border: 0.0625rem solid var(--color-decision);
+  border-radius: var(--radius-control);
+  background: var(--color-decision);
+  color: white;
+  font-size: var(--text-ui);
+  font-weight: 600;
+  transition:
+    background-color var(--motion-state) ease,
+    opacity var(--motion-state) ease;
+}
+
+.scenario-builder__submit button:hover:not(:disabled) {
+  background: oklch(0.42 0.105 140);
+}
+
+.scenario-builder__submit button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.scenario-builder__rail {
+  margin-block-start: var(--space-8);
+}
+
+.experiment-progress {
+  border: 0.0625rem solid var(--color-line);
+  border-radius: var(--radius-panel);
+}
+
+.experiment-progress > h2,
+.experiment-progress > div {
+  margin: 0;
+  padding: var(--space-6);
+}
+
+.experiment-progress > h2 {
+  padding-block-end: 0;
+  font-size: var(--text-ui);
+  font-weight: 600;
+}
+
+.experiment-progress > div + div {
+  border-block-start: 0.0625rem solid var(--color-line);
+}
+
+.experiment-progress p,
+.experiment-progress h3 {
+  margin: 0;
+}
+
+.experiment-progress [role="status"] p {
+  color: var(--color-muted);
+  font-size: var(--text-ui);
+}
+
+.experiment-progress__error strong {
+  color: var(--color-risk);
+  font-size: var(--text-ui);
+}
+
+.experiment-progress__error p,
+.experiment-progress__latest p {
+  margin-block-start: var(--space-2);
+  color: var(--color-muted);
+  font-size: var(--text-ui);
+}
+
+.experiment-progress__latest h3 {
+  font-size: var(--text-ui);
+  font-weight: 600;
+}
+
+.experiment-progress__latest a {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  margin-block-start: var(--space-4);
+  color: var(--color-decision);
+  font-size: var(--text-ui);
+  font-weight: 600;
+}
+
+.scenario-builder-state {
+  max-width: 48rem;
+  padding-block: clamp(4rem, 12vw, 9rem);
+  border-block-end: 0.0625rem solid var(--color-line);
+}
+
+.scenario-builder-state h1,
+.scenario-builder-state p {
+  margin: 0;
+}
+
+.scenario-builder-state p {
+  margin-block-start: var(--space-4);
+  color: var(--color-muted);
+}
+
+@media (min-width: 80rem) {
+  .scenario-builder__layout {
+    grid-template-columns: minmax(0, 1fr) 20rem;
+    column-gap: var(--space-8);
+  }
+
+  .scenario-builder__rail {
+    position: sticky;
+    inset-block-start: var(--space-6);
+    align-self: start;
+  }
+}
+
+@media (max-width: 64rem) {
+  .scenario-builder__header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .policy-lever {
+    grid-template-columns: minmax(12rem, 0.8fr) minmax(12rem, 1.2fr);
+  }
+
+  .policy-lever__control {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 47.9375rem) {
+  .scenario-builder__header dl {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-3);
+  }
+
+  .policy-lever {
+    display: block;
+  }
+
+  .policy-lever > p:not(.policy-lever__error),
+  .policy-lever__control,
+  .policy-lever__values,
+  .policy-lever__error {
+    margin-block-start: var(--space-3);
+  }
+
+  .policy-lever__values {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .scenario-builder__execution {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .scenario-builder__submit {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .scenario-builder__submit button {
+    width: 100%;
+  }
+}

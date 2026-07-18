@@ -210,3 +210,66 @@ export interface ExecutiveBrief {
   provenance: BriefProvenance;
   digest: string;
 }
+
+export interface ScenarioResource {
+  id: string;
+  scenario_id: string;
+  name: string;
+  company_model_version: string;
+  schema_version: string;
+  horizon_days: number;
+  warmup_days: number;
+  evaluation_days: number;
+  runoff_days: number;
+  baseline_scenario_id: string | null;
+  policy_levers: PolicyLevers;
+}
+
+export type ScenarioPayload = Omit<ScenarioResource, "id">;
+
+export interface CompanyReference {
+  company_id: string;
+  name: string;
+  model_version: string;
+  products: Array<{
+    product_id: string;
+    name: string;
+    standard_price_cents: number;
+  }>;
+  customer_segments: Array<{
+    segment_id: string;
+    name: string;
+    payment_terms_days: number;
+  }>;
+  plant: {
+    resources: Array<{
+      resource_id: string;
+      daily_capacity_minutes: number;
+      max_overtime_minutes: number;
+    }>;
+    materials: Array<{
+      material_id: string;
+      name: string;
+      supplier_lead_time_days: number;
+    }>;
+  };
+}
+
+export type ExperimentStatus = "queued" | "running" | "completed" | "failed";
+
+export interface ExperimentResource {
+  id: number;
+  scenario_id: string;
+  baseline_experiment_id: number | null;
+  status: ExperimentStatus;
+  seed: number;
+  iterations: number;
+  master_seed: number;
+  replication_count: number;
+  artifact_digest: string | null;
+  error_code: string | null;
+  error_detail: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}

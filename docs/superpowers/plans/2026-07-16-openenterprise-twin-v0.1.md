@@ -481,20 +481,20 @@ git commit -m "feat: deliver the scenario decision room"
 - Consumes: scenario creation and experiment lifecycle endpoints.
 - Produces an autosaved, validated policy editor that retains the last valid result while recalculating.
 
-- [ ] **Step 1: Test policy validation and retained results**
+- [x] **Step 1: Test policy validation and retained results**
 
 Test price, capacity and safety-stock boundaries; changed-driver count; submission payload; progress announcement; and retention of the last completed comparison during a new run.
 
-- [ ] **Step 2: Implement scenario branching and recalculation**
+- [x] **Step 2: Implement scenario branching and recalculation**
 
 Group levers by commercial, operations, supply and finance. Every lever shows unit, baseline, changed value and direct mechanism. Preserve inputs on errors and display stable API error codes with corrective action.
 
-- [ ] **Step 3: Verify integration behavior**
+- [x] **Step 3: Verify integration behavior**
 
 Run: `cd frontend && npm run test -- --run ScenarioBuilder`  
 Expected: validation, lifecycle and error-state tests pass.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add frontend/src/features/scenarios frontend/tests
