@@ -11,14 +11,23 @@ from openenterprise_twin.api.dependencies import (
     get_session,
 )
 from openenterprise_twin.api.errors import ApiProblemError
-from openenterprise_twin.api.schemas import ExperimentCreate, ExperimentRead
+from openenterprise_twin.api.schemas import (
+    ExperimentCreate,
+    ExperimentRead,
+    ScenarioRead,
+)
 from openenterprise_twin.application.decisions import (
     DecisionEvidenceError,
     get_or_build_brief,
     get_or_build_comparison,
 )
 from openenterprise_twin.application.experiments import ExperimentQueueFullError
-from openenterprise_twin.domain.scenario import Scenario
+from openenterprise_twin.domain.company import CompanyModel
+from openenterprise_twin.domain.errors import DomainValidationError
+from openenterprise_twin.domain.scenario import (
+    Scenario,
+    validate_scenario_against_company,
+)
 from openenterprise_twin.infrastructure.models import ExperimentRecord
 from openenterprise_twin.infrastructure.repositories import (
     ExperimentRepository,
@@ -26,6 +35,10 @@ from openenterprise_twin.infrastructure.repositories import (
 )
 from openenterprise_twin.reporting.brief import ExecutiveBrief
 from openenterprise_twin.scenarios.comparison import ScenarioComparison
+from openenterprise_twin.simulation.reference import (
+    build_baseline_scenario,
+    build_northstar_company,
+)
 
 router = APIRouter(prefix="/api/v1")
 SessionDependency = Annotated[Session, Depends(get_session)]
@@ -38,14 +51,23 @@ IdempotencyKey = Annotated[
 
 @router.post(
     "/scenarios",
-    response_model=Scenario,
+    response_model=ScenarioRead,
     status_code=status.HTTP_201_CREATED,
 )
 def create_scenario(
     scenario: Scenario,
     response: Response,
     session: SessionDependency,
-) -> Scenario:
+) -> ScenarioRead:
+    try:
+        validate_scenario_against_company(scenario, build_northstar_company())
+    except DomainValidationError as error:
+        raise ApiProblemError(
+            status=422,
+            code="scenario_incompatible",
+            title="Scenario is incompatible with the company model",
+            detail=str(error),
+        ) from error
     repository = ScenarioRepository(session)
     with session.begin():
         if repository.get(scenario.scenario_id) is not None:
@@ -57,15 +79,39 @@ def create_scenario(
             )
         repository.create(scenario)
     response.headers["Location"] = f"/api/v1/scenarios/{scenario.scenario_id}"
-    return scenario
+    return _scenario_read(scenario)
 
 
-@router.get("/scenarios/{scenario_id}", response_model=Scenario)
-def get_scenario(scenario_id: str, session: SessionDependency) -> Scenario:
+@router.get("/health")
+def get_health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@router.get("/company", response_model=CompanyModel)
+def get_company() -> CompanyModel:
+    return build_northstar_company()
+
+
+@router.get("/baseline", response_model=ScenarioRead)
+def get_baseline() -> ScenarioRead:
+    return _scenario_read(build_baseline_scenario())
+
+
+@router.get("/scenarios", response_model=tuple[ScenarioRead, ...])
+def list_scenarios(session: SessionDependency) -> tuple[ScenarioRead, ...]:
+    repository = ScenarioRepository(session)
+    return tuple(
+        _scenario_read(Scenario.model_validate(record.payload))
+        for record in repository.list()
+    )
+
+
+@router.get("/scenarios/{scenario_id}", response_model=ScenarioRead)
+def get_scenario(scenario_id: str, session: SessionDependency) -> ScenarioRead:
     record = ScenarioRepository(session).get(scenario_id)
     if record is None:
         raise _scenario_not_found(scenario_id)
-    return Scenario.model_validate(record.payload)
+    return _scenario_read(Scenario.model_validate(record.payload))
 
 
 @router.post(
@@ -129,11 +175,9 @@ def create_experiment(
             services.experiment_runner.submit(record.id)
         except ExperimentQueueFullError as error:
             with session.begin():
-                experiments.mark_failed(
-                    record,
-                    error_code="experiment_queue_full",
-                    error_detail=str(error),
-                )
+                queued_record = experiments.get(record.id)
+                if queued_record is not None:
+                    experiments.delete_queued(queued_record)
             raise ApiProblemError(
                 status=429,
                 code="experiment_queue_full",
@@ -162,22 +206,16 @@ def get_experiment(
 )
 def get_comparison(
     experiment_id: int,
-    session: SessionDependency,
     services: ServicesDependency,
 ) -> ScenarioComparison:
-    repository = ExperimentRepository(session)
-    with session.begin():
-        record = repository.get(experiment_id)
-        if record is None:
-            raise _experiment_not_found(experiment_id)
-        try:
-            return get_or_build_comparison(
-                record,
-                repository=repository,
-                artifact_store=services.artifact_store,
-            )
-        except DecisionEvidenceError as error:
-            raise _decision_problem(error) from error
+    try:
+        return get_or_build_comparison(
+            experiment_id,
+            repository=services.decision_repository,
+            artifact_store=services.artifact_store,
+        )
+    except DecisionEvidenceError as error:
+        raise _decision_problem(error) from error
 
 
 @router.get(
@@ -186,22 +224,16 @@ def get_comparison(
 )
 def get_report(
     experiment_id: int,
-    session: SessionDependency,
     services: ServicesDependency,
 ) -> ExecutiveBrief:
-    repository = ExperimentRepository(session)
-    with session.begin():
-        record = repository.get(experiment_id)
-        if record is None:
-            raise _experiment_not_found(experiment_id)
-        try:
-            return get_or_build_brief(
-                record,
-                repository=repository,
-                artifact_store=services.artifact_store,
-            )
-        except DecisionEvidenceError as error:
-            raise _decision_problem(error) from error
+    try:
+        return get_or_build_brief(
+            experiment_id,
+            repository=services.decision_repository,
+            artifact_store=services.artifact_store,
+        )
+    except DecisionEvidenceError as error:
+        raise _decision_problem(error) from error
 
 
 def _resolve_baseline_experiment_id(
@@ -227,6 +259,28 @@ def _resolve_baseline_experiment_id(
                 "replication count before this candidate."
             ),
         )
+    result_payload = baseline.result_payload or {}
+    expected_metadata = {
+        "company_model_version": scenario.company_model_version,
+        "scenario_schema_version": scenario.schema_version,
+        "horizon_days": scenario.horizon_days,
+        "warmup_days": scenario.warmup_days,
+        "evaluation_days": scenario.evaluation_days,
+        "runoff_days": scenario.runoff_days,
+    }
+    if any(
+        result_payload.get(name) != value
+        for name, value in expected_metadata.items()
+    ):
+        raise ApiProblemError(
+            status=409,
+            code="baseline_experiment_incompatible",
+            title="Completed baseline experiment is incompatible",
+            detail=(
+                "Run the baseline with the candidate model version, schema, "
+                "and lifecycle calendar before creating this experiment."
+            ),
+        )
     return baseline.id
 
 
@@ -238,6 +292,8 @@ def _experiment_read(record: ExperimentRecord) -> ExperimentRead:
         status=record.status,
         master_seed=record.master_seed,
         replication_count=record.replication_count,
+        seed=record.master_seed,
+        iterations=record.replication_count,
         artifact_digest=record.artifact_digest,
         error_code=record.error_code,
         error_detail=record.error_detail,
@@ -245,6 +301,10 @@ def _experiment_read(record: ExperimentRecord) -> ExperimentRead:
         started_at=record.started_at,
         completed_at=record.completed_at,
     )
+
+
+def _scenario_read(scenario: Scenario) -> ScenarioRead:
+    return ScenarioRead(id=scenario.scenario_id, **scenario.model_dump())
 
 
 def _scenario_not_found(scenario_id: str) -> ApiProblemError:
@@ -267,7 +327,7 @@ def _experiment_not_found(experiment_id: int) -> ApiProblemError:
 
 def _decision_problem(error: DecisionEvidenceError) -> ApiProblemError:
     return ApiProblemError(
-        status=409,
+        status=404 if error.code == "experiment_not_found" else 409,
         code=error.code,
         title="Decision evidence unavailable",
         detail=error.detail,

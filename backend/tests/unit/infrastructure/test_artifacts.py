@@ -1,9 +1,11 @@
 """Contracts for content-addressed artifact persistence."""
 
+import gzip
 from pathlib import Path
 
 import pytest
 
+from openenterprise_twin.infrastructure import artifacts as artifacts_module
 from openenterprise_twin.infrastructure.artifacts import (
     ArtifactNotFoundError,
     FileArtifactStore,
@@ -30,3 +32,14 @@ def test_artifact_store_rejects_invalid_or_missing_digests(tmp_path: Path) -> No
     with pytest.raises(ArtifactNotFoundError):
         store.get_json("0" * 64)
 
+
+def test_artifact_store_rejects_corrupted_content(tmp_path: Path) -> None:
+    store = FileArtifactStore(tmp_path)
+    digest = store.put_json({"metric": "ebitda", "value": 10})
+    path = tmp_path / f"{digest}.json.gz"
+    path.write_bytes(gzip.compress(b'{"metric":"ebitda","value":11}', mtime=0))
+
+    with pytest.raises(artifacts_module.ArtifactIntegrityError, match=digest):
+        store.get_json(digest)
+    with pytest.raises(artifacts_module.ArtifactIntegrityError, match=digest):
+        store.put_json({"metric": "ebitda", "value": 10})

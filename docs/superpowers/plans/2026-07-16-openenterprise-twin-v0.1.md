@@ -240,7 +240,7 @@ git commit -m "feat: quantify scenario uncertainty"
 - Produces: `build_executive_brief(comparison) -> ExecutiveBrief`.
 - The brief contains recommendation, outcome deltas, mechanisms, constraints, downside triggers, assumptions and provenance.
 
-- [ ] **Step 1: Write evidence-linkage tests**
+- [x] **Step 1: Write evidence-linkage tests**
 
 ```python
 def test_recommendation_cites_metric_evidence(comparison):
@@ -255,16 +255,16 @@ def test_liquidity_breach_prevents_unqualified_recommendation(comparison_with_ca
     assert "closing_cash" in brief.recommendation.evidence_metric_ids
 ```
 
-- [ ] **Step 2: Implement delta, materiality and guardrail logic**
+- [x] **Step 2: Implement delta, materiality and guardrail logic**
 
 Materiality uses metric-specific thresholds stored in the company model. Comparisons use replication-level paired differences from common random numbers and expose confidence intervals and joint-improvement probabilities. A recommendation is `adopt`, `conditional` or `do_not_adopt`; template clauses are selected only from computed result states.
 
-- [ ] **Step 3: Verify reporting tests**
+- [x] **Step 3: Verify reporting tests**
 
 Run: `cd backend && python -m pytest tests/unit/scenarios tests/unit/reporting -q`  
 Expected: all tests pass and no snapshot contains unsupported prose.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add backend/src/openenterprise_twin/scenarios backend/src/openenterprise_twin/reporting backend/tests/unit
@@ -285,7 +285,7 @@ git commit -m "feat: turn experiments into decision briefs"
 - Produces: `DemandModel`, `OperationsModel`, `FinanceModel`, `RiskMetric`, `OptimizationStrategy`, `ReportSection` protocols.
 - Produces: `PluginRegistry.register(manifest, capability)` and `PluginRegistry.resolve(capability_id)`.
 
-- [ ] **Step 1: Test duplicate and incompatible registrations**
+- [x] **Step 1: Test duplicate and incompatible registrations**
 
 ```python
 def test_registry_rejects_duplicate_capability(plugin_registry, demand_plugin):
@@ -294,16 +294,16 @@ def test_registry_rejects_duplicate_capability(plugin_registry, demand_plugin):
         plugin_registry.register(demand_plugin.manifest, demand_plugin)
 ```
 
-- [ ] **Step 2: Implement manifests and registry**
+- [x] **Step 2: Implement manifests and registry**
 
 Validate semantic versions, engine compatibility, configuration schema and unique capability identifiers. Plugins receive typed inputs only; no persistence session or FastAPI object is exposed.
 
-- [ ] **Step 3: Verify plugin tests and package boundaries**
+- [x] **Step 3: Verify plugin tests and package boundaries**
 
 Run: `cd backend && python -m pytest tests/unit/plugins -q && python -m import_linter`  
 Expected: tests pass and forbidden infrastructure imports are absent from domain and simulation.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add backend/src/openenterprise_twin/plugins backend/tests/unit/plugins backend/pyproject.toml
@@ -335,7 +335,7 @@ git commit -m "feat: define safe extension contracts"
 - Produces stable `application/problem+json` errors with `code`, `detail`, `trace_id` and field violations.
 - Experiment creation returns `202 Accepted`, `Location` and a durable lifecycle state.
 
-- [ ] **Step 1: Write the end-to-end API contract test**
+- [x] **Step 1: Write the end-to-end API contract test**
 
 ```python
 def test_create_run_compare_and_report(api_client):
@@ -350,20 +350,20 @@ def test_create_run_compare_and_report(api_client):
     assert api_client.get(f"/api/v1/experiments/{experiment['id']}/report").status_code == 200
 ```
 
-- [ ] **Step 2: Implement persistence and reversible migration**
+- [x] **Step 2: Implement persistence and reversible migration**
 
 Persist scenarios, experiment lifecycle, metric summaries, briefs and provenance. Store full traces through `ArtifactStore`; the filesystem adapter writes content-addressed gzip JSON outside transaction tables.
 
-- [ ] **Step 3: Implement bounded in-process execution**
+- [x] **Step 3: Implement bounded in-process execution**
 
 Use an application-level executor behind an `ExperimentRunner` protocol. Enforce limits on horizon, iterations and concurrent runs. Preserve stable lifecycle states: `queued`, `running`, `completed`, `failed`.
 
-- [ ] **Step 4: Verify migration and API contracts**
+- [x] **Step 4: Verify migration and API contracts**
 
 Run: `docker compose up -d db && cd backend && alembic upgrade head && python -m pytest tests/integration -q`  
 Expected: migration succeeds against PostgreSQL 16 and all contract tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend docker-compose.yml

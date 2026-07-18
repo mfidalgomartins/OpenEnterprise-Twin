@@ -8,13 +8,17 @@ from fastapi import Depends, Request
 from sqlalchemy.orm import Session, sessionmaker
 
 from openenterprise_twin.application.experiments import ExperimentRunner
-from openenterprise_twin.infrastructure.artifacts import FileArtifactStore
+from openenterprise_twin.application.ports import (
+    ArtifactReader,
+    DecisionEvidenceRepository,
+)
 
 
 @dataclass(frozen=True, slots=True)
 class AppServices:
     session_factory: sessionmaker[Session]
-    artifact_store: FileArtifactStore
+    artifact_store: ArtifactReader
+    decision_repository: DecisionEvidenceRepository
     experiment_runner: ExperimentRunner
 
 

@@ -3,6 +3,7 @@ from datetime import datetime
 import pytest
 
 from openenterprise_twin.domain.errors import InvariantViolation
+from openenterprise_twin.simulation import experiment as experiment_module
 from openenterprise_twin.simulation.engine import simulate_trace
 from openenterprise_twin.simulation.experiment import (
     ExperimentRequest,
@@ -70,6 +71,27 @@ def test_experiment_exposes_required_distributions_and_replications() -> None:
         assert distribution.median <= distribution.p90
         assert distribution.p90 <= distribution.p95
         assert 0 <= distribution.breach_probability <= 1
+
+
+def test_durable_experiment_artifact_retains_every_full_trace() -> None:
+    request = ExperimentRequest(
+        company=build_northstar_company(),
+        scenario=build_baseline_scenario(horizon_days=3),
+        master_seed=731,
+        replications=2,
+        max_workers=1,
+    )
+
+    artifact = experiment_module.run_experiment_with_traces(request)
+
+    assert artifact.schema_version == "0.1.0"
+    assert artifact.result.replication_count == 2
+    assert [trace.replication_id for trace in artifact.traces] == [0, 1]
+    assert all(len(trace.periods) == 3 for trace in artifact.traces)
+    assert [trace.digest for trace in artifact.traces] == [
+        replication.trace_digest
+        for replication in artifact.result.replications
+    ]
 
 
 def test_experiment_is_reproducible() -> None:

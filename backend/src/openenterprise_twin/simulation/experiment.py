@@ -20,7 +20,7 @@ from openenterprise_twin.domain.company import (
     VersionString,
 )
 from openenterprise_twin.domain.errors import InvariantViolation
-from openenterprise_twin.domain.results import SimulationTrace
+from openenterprise_twin.domain.results import SimulationTrace, trace_content_digest
 from openenterprise_twin.domain.scenario import (
     PolicyLevers,
     Scenario,
@@ -161,6 +161,43 @@ class ExperimentResult(DomainModel):
         )
 
 
+class ExperimentArtifact(DomainModel):
+    """Durable experiment envelope containing summaries and complete traces."""
+
+    schema_version: Literal["0.1.0"] = "0.1.0"
+    result: ExperimentResult
+    traces: tuple[SimulationTrace, ...]
+
+    @model_validator(mode="after")
+    def validate_trace_reconciliation(self) -> Self:
+        if len(self.traces) != self.result.replication_count:
+            raise ValueError("artifact trace count must match the experiment")
+        if tuple(trace.replication_id for trace in self.traces) != tuple(
+            range(self.result.replication_count)
+        ):
+            raise ValueError("artifact trace identifiers must be contiguous")
+        for trace, replication in zip(
+            self.traces,
+            self.result.replications,
+            strict=True,
+        ):
+            if trace_content_digest(trace) != trace.digest:
+                raise ValueError("artifact contains a trace with an invalid digest")
+            if trace.digest != replication.trace_digest:
+                raise ValueError("artifact trace does not reconcile with its metrics")
+            if (
+                trace.scenario_id != self.result.scenario_id
+                or trace.seed != self.result.master_seed
+            ):
+                raise ValueError("artifact trace provenance does not match the result")
+        return self
+
+
+class _ReplicationExecution(DomainModel):
+    metrics: ReplicationMetrics
+    trace: SimulationTrace
+
+
 def run_experiment(request: ExperimentRequest) -> ExperimentResult:
     """Execute ordered replications and aggregate deterministic distributions."""
 
@@ -221,6 +258,75 @@ def run_experiment(request: ExperimentRequest) -> ExperimentResult:
     result = result.model_copy(update={"digest": experiment_content_digest(result)})
     validate_experiment_result(result)
     return result
+
+
+def run_experiment_with_traces(request: ExperimentRequest) -> ExperimentArtifact:
+    """Execute an experiment and retain every period-level simulation trace."""
+
+    created_at = datetime.now(UTC)
+    started_at = perf_counter()
+    tasks = tuple(
+        (request.company, request.scenario, request.master_seed, replication_id)
+        for replication_id in range(request.replications)
+    )
+    if request.max_workers == 1:
+        executions = tuple(_run_replication_with_trace(task) for task in tasks)
+    else:
+        workers = min(request.max_workers, request.replications)
+        chunk_size = max(1, request.replications // (workers * 4))
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            executions = tuple(
+                executor.map(
+                    _run_replication_with_trace,
+                    tasks,
+                    chunksize=chunk_size,
+                )
+            )
+    replications = tuple(execution.metrics for execution in executions)
+    rules = _resolved_guardrails(request)
+    metric_results = tuple(
+        MetricResult(
+            metric_name=metric_name,
+            distribution=summarize_replication_metric(
+                metric_name=metric_name,
+                replications=replications,
+                guardrail=rules[metric_name],
+            ),
+        )
+        for metric_name in METRIC_NAMES
+    )
+    result = ExperimentResult(
+        scenario_id=request.scenario.scenario_id,
+        scenario_name=request.scenario.name,
+        baseline_scenario_id=request.scenario.baseline_scenario_id,
+        policy_levers=request.scenario.policy_levers,
+        company_model_version=request.company.model_version,
+        scenario_schema_version=request.scenario.schema_version,
+        engine_version=ENGINE_VERSION,
+        shock_tape_version=TAPE_VERSION,
+        company_model_hash=_company_model_digest(request.company),
+        resolved_assumptions_hash=_assumptions_digest(request),
+        plugin_versions=_resolved_plugin_versions(request),
+        decision_metric_rules=request.company.decision_policy.metric_rules,
+        master_seed=request.master_seed,
+        replication_count=request.replications,
+        created_at=created_at,
+        duration_seconds=perf_counter() - started_at,
+        horizon_days=request.scenario.horizon_days,
+        warmup_days=request.scenario.warmup_days,
+        evaluation_days=request.scenario.evaluation_days,
+        runoff_days=request.scenario.runoff_days,
+        guardrails=tuple(rules[name] for name in METRIC_NAMES),
+        replications=replications,
+        metric_results=metric_results,
+        digest="0" * 64,
+    )
+    result = result.model_copy(update={"digest": experiment_content_digest(result)})
+    validate_experiment_result(result)
+    return ExperimentArtifact(
+        result=result,
+        traces=tuple(execution.trace for execution in executions),
+    )
 
 
 def validate_experiment_result(result: ExperimentResult) -> None:
@@ -306,6 +412,12 @@ def validate_experiment_result(result: ExperimentResult) -> None:
 def _run_replication(
     task: tuple[CompanyModel, Scenario, int, int],
 ) -> ReplicationMetrics:
+    return _run_replication_with_trace(task).metrics
+
+
+def _run_replication_with_trace(
+    task: tuple[CompanyModel, Scenario, int, int],
+) -> _ReplicationExecution:
     company, scenario, master_seed, replication_id = task
     tape = build_shock_tape(
         company,
@@ -320,10 +432,13 @@ def _run_replication(
         allow_rescue_funding=True,
     )
     values = _trace_metric_values(trace)
-    return ReplicationMetrics(
-        replication_id=replication_id,
-        trace_digest=trace.digest,
-        metric_entries=tuple((name, values[name]) for name in METRIC_NAMES),
+    return _ReplicationExecution(
+        metrics=ReplicationMetrics(
+            replication_id=replication_id,
+            trace_digest=trace.digest,
+            metric_entries=tuple((name, values[name]) for name in METRIC_NAMES),
+        ),
+        trace=trace,
     )
 
 

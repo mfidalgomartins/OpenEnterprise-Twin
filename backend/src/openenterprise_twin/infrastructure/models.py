@@ -125,8 +125,35 @@ class ExperimentRecord(Base):
         ),
         CheckConstraint("seed >= 0", name="seed_non_negative"),
         CheckConstraint(
+            "seed <= 9223372036854775807",
+            name="seed_bigint",
+        ),
+        CheckConstraint(
             "replication_count > 0",
             name="replication_count_positive",
+        ),
+        CheckConstraint(
+            "("
+            "status = 'queued' AND started_at IS NULL AND completed_at IS NULL "
+            "AND artifact_digest IS NULL AND result_payload IS NULL "
+            "AND error_code IS NULL AND error_detail IS NULL"
+            ") OR ("
+            "status = 'running' AND started_at IS NOT NULL "
+            "AND completed_at IS NULL AND artifact_digest IS NULL "
+            "AND result_payload IS NULL AND error_code IS NULL "
+            "AND error_detail IS NULL"
+            ") OR ("
+            "status = 'completed' AND started_at IS NOT NULL "
+            "AND completed_at IS NOT NULL AND artifact_digest IS NOT NULL "
+            "AND result_payload IS NOT NULL AND error_code IS NULL "
+            "AND error_detail IS NULL"
+            ") OR ("
+            "status = 'failed' AND started_at IS NOT NULL "
+            "AND completed_at IS NOT NULL AND artifact_digest IS NULL "
+            "AND result_payload IS NULL AND error_code IS NOT NULL "
+            "AND error_detail IS NOT NULL"
+            ")",
+            name="lifecycle_consistency",
         ),
         UniqueConstraint(
             "idempotency_key",

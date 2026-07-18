@@ -89,3 +89,12 @@ forbidden_modules = [
     "openenterprise_twin.infrastructure",
     "openenterprise_twin.persistence",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Application services depend on ports, not infrastructure"
+type = "forbidden"
+source_modules = ["openenterprise_twin.application"]
+forbidden_modules = [
+    "openenterprise_twin.api",
+    "openenterprise_twin.infrastructure",
+]

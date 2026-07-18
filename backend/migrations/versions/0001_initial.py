@@ -97,8 +97,35 @@ def upgrade() -> None:
             name=op.f("ck_experiments_seed_non_negative"),
         ),
         sa.CheckConstraint(
+            "seed <= 9223372036854775807",
+            name=op.f("ck_experiments_seed_bigint"),
+        ),
+        sa.CheckConstraint(
             "replication_count > 0",
             name=op.f("ck_experiments_replication_count_positive"),
+        ),
+        sa.CheckConstraint(
+            "("
+            "status = 'queued' AND started_at IS NULL AND completed_at IS NULL "
+            "AND artifact_digest IS NULL AND result_payload IS NULL "
+            "AND error_code IS NULL AND error_detail IS NULL"
+            ") OR ("
+            "status = 'running' AND started_at IS NOT NULL "
+            "AND completed_at IS NULL AND artifact_digest IS NULL "
+            "AND result_payload IS NULL AND error_code IS NULL "
+            "AND error_detail IS NULL"
+            ") OR ("
+            "status = 'completed' AND started_at IS NOT NULL "
+            "AND completed_at IS NOT NULL AND artifact_digest IS NOT NULL "
+            "AND result_payload IS NOT NULL AND error_code IS NULL "
+            "AND error_detail IS NULL"
+            ") OR ("
+            "status = 'failed' AND started_at IS NOT NULL "
+            "AND completed_at IS NOT NULL AND artifact_digest IS NULL "
+            "AND result_payload IS NULL AND error_code IS NOT NULL "
+            "AND error_detail IS NOT NULL"
+            ")",
+            name=op.f("ck_experiments_lifecycle_consistency"),
         ),
         sa.ForeignKeyConstraint(
             ["baseline_experiment_id"],

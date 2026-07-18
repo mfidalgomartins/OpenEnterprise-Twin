@@ -5,17 +5,21 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from sqlalchemy.engine import make_url
+from starlette.middleware.cors import CORSMiddleware
 
 from openenterprise_twin.api.dependencies import AppServices
 from openenterprise_twin.api.errors import install_error_handlers
 from openenterprise_twin.api.routes import router
-from openenterprise_twin.application.experiments import BoundedExperimentRunner
 from openenterprise_twin.infrastructure.artifacts import FileArtifactStore
 from openenterprise_twin.infrastructure.database import (
     create_database_engine,
     create_session_factory,
 )
 from openenterprise_twin.infrastructure.models import Base
+from openenterprise_twin.infrastructure.repositories import (
+    SqlAlchemyDecisionEvidenceRepository,
+)
+from openenterprise_twin.infrastructure.runner import BoundedExperimentRunner
 from openenterprise_twin.infrastructure.settings import Settings
 
 
@@ -41,9 +45,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         del app
         try:
+            runner.recover_pending()
             yield
         finally:
-            runner.shutdown()
+            runner.shutdown(
+                resolved_settings.experiment_shutdown_timeout_seconds
+            )
             engine.dispose()
 
     app = FastAPI(
@@ -51,9 +58,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    if resolved_settings.cors_allowed_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=[
+                str(origin).rstrip("/")
+                for origin in resolved_settings.cors_allowed_origins
+            ],
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Accept", "Content-Type", "Idempotency-Key"],
+            expose_headers=["Location", "X-Trace-ID"],
+        )
     app.state.services = AppServices(
         session_factory=session_factory,
         artifact_store=artifact_store,
+        decision_repository=SqlAlchemyDecisionEvidenceRepository(
+            session_factory
+        ),
         experiment_runner=runner,
     )
     install_error_handlers(app)

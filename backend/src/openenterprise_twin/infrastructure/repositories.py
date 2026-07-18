@@ -4,8 +4,9 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 
 from sqlalchemy import Select, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
+from openenterprise_twin.application.ports import ExperimentDecisionRecord
 from openenterprise_twin.domain.scenario import Scenario
 from openenterprise_twin.infrastructure.models import (
     ExperimentRecord,
@@ -19,6 +20,12 @@ class ScenarioRepository:
 
     def get(self, scenario_id: str) -> ScenarioRecord | None:
         return self._session.get(ScenarioRecord, scenario_id)
+
+    def list(self) -> tuple[ScenarioRecord, ...]:
+        statement: Select[tuple[ScenarioRecord]] = select(ScenarioRecord).order_by(
+            ScenarioRecord.scenario_id
+        )
+        return tuple(self._session.scalars(statement))
 
     def create(self, scenario: Scenario) -> ScenarioRecord:
         record = ScenarioRecord(
@@ -90,12 +97,54 @@ class ExperimentRepository:
         self._session.flush()
         return record
 
-    def mark_running(self, record: ExperimentRecord) -> None:
+    def delete_queued(self, record: ExperimentRecord) -> None:
+        if record.status != "queued":
+            raise RuntimeError("only queued experiments can be deleted")
+        self._session.delete(record)
+        self._session.flush()
+
+    def recover_interrupted(self) -> int:
+        records = tuple(
+            self._session.scalars(
+                select(ExperimentRecord).where(
+                    ExperimentRecord.status == "running"
+                )
+            )
+        )
+        now = datetime.now(UTC)
+        for record in records:
+            record.status = "queued"
+            record.started_at = None
+            record.updated_at = now
+        self._session.flush()
+        return len(records)
+
+    def pending_ids(self) -> tuple[int, ...]:
+        statement = (
+            select(ExperimentRecord.id)
+            .where(ExperimentRecord.status == "queued")
+            .order_by(ExperimentRecord.created_at, ExperimentRecord.id)
+        )
+        return tuple(self._session.scalars(statement))
+
+    def claim_queued(self, experiment_id: int) -> ExperimentRecord | None:
+        statement = (
+            select(ExperimentRecord)
+            .where(
+                ExperimentRecord.id == experiment_id,
+                ExperimentRecord.status == "queued",
+            )
+            .with_for_update(skip_locked=True)
+        )
+        record = self._session.scalar(statement)
+        if record is None:
+            return None
         now = datetime.now(UTC)
         record.status = "running"
         record.started_at = now
         record.updated_at = now
         self._session.flush()
+        return record
 
     def mark_completed(
         self,
@@ -104,6 +153,8 @@ class ExperimentRepository:
         artifact_digest: str,
         result_payload: Mapping[str, object],
     ) -> None:
+        if record.status != "running":
+            raise RuntimeError("only running experiments can complete")
         now = datetime.now(UTC)
         record.status = "completed"
         record.artifact_digest = artifact_digest
@@ -121,6 +172,8 @@ class ExperimentRepository:
         error_code: str,
         error_detail: str,
     ) -> None:
+        if record.status not in {"queued", "running"}:
+            raise RuntimeError("only active experiments can fail")
         now = datetime.now(UTC)
         record.status = "failed"
         record.error_code = error_code
@@ -146,3 +199,56 @@ class ExperimentRepository:
         record.brief_payload = dict(payload)
         record.updated_at = datetime.now(UTC)
         self._session.flush()
+
+
+class SqlAlchemyDecisionEvidenceRepository:
+    """Short-transaction adapter for CPU and I/O-heavy decision services."""
+
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+
+    def get(self, experiment_id: int) -> ExperimentDecisionRecord | None:
+        with self._session_factory() as session:
+            record = ExperimentRepository(session).get(experiment_id)
+            if record is None:
+                return None
+            return ExperimentDecisionRecord(
+                id=record.id,
+                status=record.status,
+                baseline_experiment_id=record.baseline_experiment_id,
+                artifact_digest=record.artifact_digest,
+                comparison_payload=(
+                    dict(record.comparison_payload)
+                    if record.comparison_payload is not None
+                    else None
+                ),
+                brief_payload=(
+                    dict(record.brief_payload)
+                    if record.brief_payload is not None
+                    else None
+                ),
+            )
+
+    def store_comparison(
+        self,
+        experiment_id: int,
+        payload: Mapping[str, object],
+    ) -> None:
+        with self._session_factory() as session, session.begin():
+            repository = ExperimentRepository(session)
+            record = repository.get(experiment_id)
+            if record is None:
+                raise LookupError(f"experiment '{experiment_id}' is not present")
+            repository.store_comparison(record, payload)
+
+    def store_brief(
+        self,
+        experiment_id: int,
+        payload: Mapping[str, object],
+    ) -> None:
+        with self._session_factory() as session, session.begin():
+            repository = ExperimentRepository(session)
+            record = repository.get(experiment_id)
+            if record is None:
+                raise LookupError(f"experiment '{experiment_id}' is not present")
+            repository.store_brief(record, payload)

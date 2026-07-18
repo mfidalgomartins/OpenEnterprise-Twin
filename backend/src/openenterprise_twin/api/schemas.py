@@ -3,7 +3,9 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+
+from openenterprise_twin.domain.scenario import Scenario
 
 ExperimentStatus = Literal["queued", "running", "completed", "failed"]
 
@@ -13,9 +15,29 @@ class ApiModel(BaseModel):
 
 
 class ExperimentCreate(ApiModel):
-    replications: Annotated[int, Field(gt=0, le=10_000)]
-    master_seed: Annotated[int, Field(ge=0)]
+    replications: Annotated[
+        int,
+        Field(
+            gt=0,
+            le=10_000,
+            validation_alias=AliasChoices("iterations", "replications"),
+        ),
+    ]
+    master_seed: Annotated[
+        int,
+        Field(
+            ge=0,
+            le=2**63 - 1,
+            validation_alias=AliasChoices("seed", "master_seed"),
+        ),
+    ]
     max_workers: Annotated[int, Field(gt=0, le=16)] = 1
+
+
+class ScenarioRead(Scenario):
+    """Public scenario representation with the canonical resource identifier."""
+
+    id: str
 
 
 class ExperimentRead(ApiModel):
@@ -25,6 +47,8 @@ class ExperimentRead(ApiModel):
     status: ExperimentStatus
     master_seed: int
     replication_count: int
+    seed: int
+    iterations: int
     artifact_digest: str | None
     error_code: str | None
     error_detail: str | None

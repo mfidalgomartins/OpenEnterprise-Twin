@@ -1,6 +1,6 @@
 """Focused contracts for persistence configuration and ORM records."""
 
-from datetime import UTC
+from datetime import UTC, datetime
 
 import pytest
 
@@ -114,7 +114,9 @@ def test_experiment_schema_has_required_constraints_and_indexes() -> None:
 
     assert "ck_experiments_status" in check_constraints
     assert "ck_experiments_seed_non_negative" in check_constraints
+    assert "ck_experiments_seed_bigint" in check_constraints
     assert "ck_experiments_replication_count_positive" in check_constraints
+    assert "ck_experiments_lifecycle_consistency" in check_constraints
     assert all(
         status in check_constraints["ck_experiments_status"]
         for status in ("queued", "running", "completed", "failed")
@@ -268,6 +270,123 @@ def test_sqlite_enforces_lifecycle_constraint() -> None:
         with pytest.raises(IntegrityError):
             session.commit()
 
+    engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        pytest.param(
+            {
+                "status": "completed",
+                "started_at": datetime.now(UTC),
+                "completed_at": datetime.now(UTC),
+            },
+            id="completed-without-result",
+        ),
+        pytest.param(
+            {
+                "status": "failed",
+                "started_at": datetime.now(UTC),
+                "completed_at": datetime.now(UTC),
+            },
+            id="failed-without-error",
+        ),
+        pytest.param(
+            {
+                "status": "queued",
+                "started_at": datetime.now(UTC),
+            },
+            id="queued-with-start-time",
+        ),
+    ],
+)
+def test_sqlite_rejects_inconsistent_experiment_lifecycle(
+    record: dict[str, object],
+) -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    from openenterprise_twin.infrastructure.database import (
+        create_database_engine,
+        create_session_factory,
+    )
+    from openenterprise_twin.infrastructure.models import (
+        Base,
+        ExperimentRecord,
+        ScenarioRecord,
+    )
+    from openenterprise_twin.infrastructure.settings import Settings
+
+    engine = create_database_engine(
+        Settings(database_url="sqlite+pysqlite:///:memory:", _env_file=None)
+    )
+    Base.metadata.create_all(engine)
+    session_factory = create_session_factory(engine)
+    with session_factory.begin() as session:
+        session.add(
+            ScenarioRecord(
+                scenario_id="baseline",
+                name="Baseline",
+                version="0.1.0",
+                schema="0.1.0",
+                payload={},
+            )
+        )
+    with session_factory() as session:
+        session.add(
+            ExperimentRecord(
+                scenario_id="baseline",
+                seed=1,
+                replication_count=1,
+                request_payload={},
+                **record,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            session.commit()
+    engine.dispose()
+
+
+def test_sqlite_rejects_seed_above_signed_bigint() -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    from openenterprise_twin.infrastructure.database import (
+        create_database_engine,
+        create_session_factory,
+    )
+    from openenterprise_twin.infrastructure.models import (
+        Base,
+        ExperimentRecord,
+        ScenarioRecord,
+    )
+    from openenterprise_twin.infrastructure.settings import Settings
+
+    engine = create_database_engine(
+        Settings(database_url="sqlite+pysqlite:///:memory:", _env_file=None)
+    )
+    Base.metadata.create_all(engine)
+    session_factory = create_session_factory(engine)
+    with session_factory.begin() as session:
+        session.add(
+            ScenarioRecord(
+                scenario_id="baseline",
+                name="Baseline",
+                version="0.1.0",
+                schema="0.1.0",
+                payload={},
+            )
+        )
+    with session_factory() as session:
+        session.add(
+            ExperimentRecord(
+                scenario_id="baseline",
+                seed=2**63,
+                replication_count=1,
+                request_payload={},
+            )
+        )
+        with pytest.raises((IntegrityError, OverflowError)):
+            session.commit()
     engine.dispose()
 
 
