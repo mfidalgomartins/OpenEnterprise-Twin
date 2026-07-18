@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 
+import { ScenarioComparePage } from "../features/scenarios/ScenarioComparePage";
 import { AppShell } from "./AppShell";
 
 interface RouteIntroProps {
@@ -46,6 +47,10 @@ export function AppRoutes() {
               title="Scenarios"
             />
           }
+        />
+        <Route
+          path="scenarios/:scenarioId/compare"
+          element={<ScenarioComparePage />}
         />
         <Route
           path="decisions"

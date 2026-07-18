@@ -446,20 +446,20 @@ git commit -m "feat: establish executive decision interface"
 - Consumes: `GET /api/v1/experiments/{id}/comparison` and `/report`.
 - Produces route: `/scenarios/:scenarioId/compare?experiment={experimentId}`.
 
-- [ ] **Step 1: Write narrative and accessibility tests**
+- [x] **Step 1: Write narrative and accessibility tests**
 
 Test that recommendation, baseline/candidate uncertainty, constraints and provenance render from the API fixture; the chart has a text summary and exact-value table; recalculation state uses `aria-live="polite"`.
 
-- [ ] **Step 2: Implement the analytical narrative**
+- [x] **Step 2: Implement the analytical narrative**
 
 Use a 1fr/320px desktop grid, a conclusion-led trajectory with P10–P90 band, three inline outcomes, sticky decision rail and chapters separated by whitespace and rules. At mobile widths, place the decision rail after the headline and retain all evidence.
 
-- [ ] **Step 3: Browser-verify all breakpoints**
+- [x] **Step 3: Browser-verify all breakpoints**
 
 Run: `cd frontend && npm run dev -- --host 127.0.0.1` and inspect at 1440×1000, 1024×900 and 390×844.  
 Expected: no clipped copy, hidden material risk, horizontal scrolling or overlapping chart labels.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add frontend/src frontend/tests

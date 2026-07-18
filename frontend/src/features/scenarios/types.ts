@@ -1,0 +1,212 @@
+export type MetricName =
+  | "revenue"
+  | "ebitda"
+  | "free_cash_flow"
+  | "closing_cash"
+  | "otif"
+  | "cancellation_rate"
+  | "backlog_units"
+  | "capacity_utilization"
+  | "peak_revolver"
+  | "rescue_funding";
+
+export type DecisionStatus = "adopt" | "conditional" | "do_not_adopt";
+export type ComparisonDirection = "higher" | "lower";
+export type MechanismId =
+  | "pricing"
+  | "commercial-investment"
+  | "capacity"
+  | "inventory-sourcing"
+  | "payment-terms"
+  | "capital-investment";
+
+export interface SegmentProductPriceChange {
+  segment_id: string;
+  product_id: string;
+  price_change: string;
+}
+
+export interface ResourcePolicyChange {
+  resource_id: string;
+  regular_capacity_change: string;
+  overtime_capacity_minutes: number;
+}
+
+export interface MaterialPolicyChange {
+  material_id: string;
+  safety_stock_coverage_days: string;
+  supplier_lead_time_improvement: string;
+  supplier_unit_cost_change: string;
+}
+
+export interface SegmentPaymentTermChange {
+  segment_id: string;
+  change_days: number;
+}
+
+export interface PolicyLevers {
+  price_changes: SegmentProductPriceChange[];
+  commercial_investment_change: string;
+  resource_changes: ResourcePolicyChange[];
+  material_changes: MaterialPolicyChange[];
+  payment_term_changes: SegmentPaymentTermChange[];
+  one_off_capital_investment_cents: number;
+}
+
+export interface PluginVersion {
+  plugin_id: string;
+  version: string;
+}
+
+export interface MetricGuardrail {
+  metric_name: MetricName;
+  threshold: number;
+  breach_when: "below" | "above";
+  downside_tail: "lower" | "upper";
+}
+
+export interface MaterialityThreshold {
+  metric_name: MetricName;
+  threshold: number;
+  direction: ComparisonDirection;
+}
+
+export interface ComparisonPolicy {
+  materiality_thresholds: MaterialityThreshold[];
+}
+
+export type MetricEntry = [MetricName, number];
+
+export interface PairedDifference {
+  replication_id: number;
+  baseline_metric_entries: MetricEntry[];
+  candidate_metric_entries: MetricEntry[];
+  metric_entries: MetricEntry[];
+}
+
+export interface MetricComparison {
+  metric_name: MetricName;
+  direction: ComparisonDirection;
+  baseline_mean: number;
+  candidate_mean: number;
+  baseline_breach_probability: number;
+  candidate_breach_probability: number;
+  mean_difference: number;
+  ci95_lower: number | null;
+  ci95_upper: number | null;
+  p5_difference: number;
+  p50_difference: number;
+  p95_difference: number;
+  probability_of_improvement: number;
+  materiality_threshold: number;
+  is_material: boolean;
+}
+
+export interface ScenarioComparison {
+  baseline_scenario_id: string;
+  baseline_scenario_name: string;
+  candidate_scenario_id: string;
+  candidate_scenario_name: string;
+  candidate_policy_levers: PolicyLevers;
+  baseline_experiment_digest: string;
+  candidate_experiment_digest: string;
+  company_model_version: string;
+  company_model_hash: string;
+  scenario_schema_version: string;
+  engine_version: string;
+  shock_tape_version: string;
+  baseline_plugin_versions: PluginVersion[];
+  candidate_plugin_versions: PluginVersion[];
+  baseline_resolved_assumptions_hash: string;
+  candidate_resolved_assumptions_hash: string;
+  baseline_experiment_created_at: string;
+  candidate_experiment_created_at: string;
+  baseline_experiment_duration_seconds: number;
+  candidate_experiment_duration_seconds: number;
+  created_at: string;
+  duration_seconds: number;
+  master_seed: number;
+  replication_count: number;
+  horizon_days: number;
+  warmup_days: number;
+  evaluation_days: number;
+  runoff_days: number;
+  baseline_guardrails: MetricGuardrail[];
+  candidate_guardrails: MetricGuardrail[];
+  policy: ComparisonPolicy;
+  paired_differences: PairedDifference[];
+  metric_results: MetricComparison[];
+  joint_probability_entries: [string, number][];
+  digest: string;
+}
+
+export interface Recommendation {
+  status: DecisionStatus;
+  headline: string;
+  rationale: string[];
+  evidence_metric_ids: MetricName[];
+}
+
+export interface OutcomeDelta {
+  metric_name: MetricName;
+  baseline_mean: number;
+  candidate_mean: number;
+  mean_difference: number;
+  probability_of_improvement: number;
+  is_material: boolean;
+}
+
+export interface MechanismNarrative {
+  mechanism_id: MechanismId;
+  title: string;
+  detail: string;
+}
+
+export interface DecisionConstraint {
+  metric_name: MetricName;
+  severity: "watch" | "breach";
+  detail: string;
+}
+
+export interface DownsideTrigger {
+  metric_name: MetricName;
+  breach_probability: number;
+  detail: string;
+}
+
+export interface BriefProvenance {
+  comparison_digest: string;
+  baseline_experiment_digest: string;
+  candidate_experiment_digest: string;
+  company_model_version: string;
+  company_model_hash: string;
+  scenario_schema_version: string;
+  engine_version: string;
+  shock_tape_version: string;
+  master_seed: number;
+  replication_count: number;
+  baseline_plugin_versions: PluginVersion[];
+  candidate_plugin_versions: PluginVersion[];
+  baseline_resolved_assumptions_hash: string;
+  candidate_resolved_assumptions_hash: string;
+  baseline_experiment_created_at: string;
+  candidate_experiment_created_at: string;
+  baseline_experiment_duration_seconds: number;
+  candidate_experiment_duration_seconds: number;
+  comparison_created_at: string;
+  comparison_duration_seconds: number;
+  created_at: string;
+  duration_seconds: number;
+}
+
+export interface ExecutiveBrief {
+  decision_status: DecisionStatus;
+  recommendation: Recommendation;
+  outcome_deltas: OutcomeDelta[];
+  mechanisms: MechanismNarrative[];
+  constraints: DecisionConstraint[];
+  downside_triggers: DownsideTrigger[];
+  assumptions: string[];
+  provenance: BriefProvenance;
+  digest: string;
+}
