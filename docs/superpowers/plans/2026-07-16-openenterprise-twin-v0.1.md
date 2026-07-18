@@ -515,20 +515,20 @@ git commit -m "feat: add auditable policy experimentation"
 - Consumes: immutable `ExecutiveBrief`.
 - Produces: `/reports/:experimentId` and landscape A4 print layout.
 
-- [ ] **Step 1: Test frozen provenance and complete report sections**
+- [x] **Step 1: Test frozen provenance and complete report sections**
 
 Assert recommendation, scenario comparison, value bridge, operational feasibility, sensitivities, actions, assumptions, model version, timestamp and experiment identifier are present.
 
-- [ ] **Step 2: Implement the report using shared semantic components**
+- [x] **Step 2: Implement the report using shared semantic components**
 
 Use one conclusion per print page, fixed header/footer, exact-value tables and `break-inside: avoid`. Reports render stored snapshots and never refetch a newer experiment version.
 
-- [ ] **Step 3: Verify browser and print rendering**
+- [x] **Step 3: Verify browser and print rendering**
 
 Run: `cd frontend && npm run e2e -- report.spec.ts`  
 Expected: route renders, print media is applied and all eight report chapters are present.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add frontend/src/features/reports frontend/tests frontend/e2e

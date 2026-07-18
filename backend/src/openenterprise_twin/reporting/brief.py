@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 from time import perf_counter
 from typing import Annotated, Literal
@@ -29,6 +29,7 @@ from openenterprise_twin.simulation.experiment import (
 
 DecisionStatus = Literal["adopt", "conditional", "do_not_adopt"]
 _MAX_ADOPT_BREACH_PROBABILITY = 0.0
+_BRIEF_SCHEMA_VERSION = "0.2.0"
 
 
 class Recommendation(DomainModel):
@@ -57,6 +58,21 @@ class DownsideTrigger(DomainModel):
     metric_name: MetricName
     breach_probability: Annotated[float, Field(ge=0.0, le=1.0)]
     detail: str
+
+
+class DecisionGovernance(DomainModel):
+    decision_owner: str
+    decision_record_action: str
+    review_date: date
+
+
+class ExecutionAction(DomainModel):
+    action_id: Annotated[str, Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")]
+    title: str
+    owner: str
+    due_date: date
+    evidence_metric_ids: tuple[MetricName, ...]
+    completion_evidence: str
 
 
 class BriefProvenance(DomainModel):
@@ -97,21 +113,29 @@ class BriefProvenance(DomainModel):
 class ExecutiveBrief(DomainModel):
     """Evidence-linked decision object consumed by the API, UI and exporters."""
 
+    brief_schema_version: VersionString
     decision_status: DecisionStatus
     recommendation: Recommendation
     outcome_deltas: tuple[OutcomeDelta, ...]
     mechanisms: tuple[MechanismNarrative, ...]
     constraints: tuple[DecisionConstraint, ...]
     downside_triggers: tuple[DownsideTrigger, ...]
+    governance: DecisionGovernance
+    actions: tuple[ExecutionAction, ...]
     assumptions: tuple[str, ...]
     provenance: BriefProvenance
     digest: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
 
 
-def build_executive_brief(comparison: ScenarioComparison) -> ExecutiveBrief:
+def build_executive_brief(
+    comparison: ScenarioComparison,
+    *,
+    created_at: datetime | None = None,
+    duration_seconds: float | None = None,
+) -> ExecutiveBrief:
     """Build a recommendation using only computed comparison states."""
 
-    created_at = datetime.now(UTC)
+    report_created_at = created_at or datetime.now(UTC)
     started_at = perf_counter()
     validate_scenario_comparison(comparison)
     metrics = comparison.metrics
@@ -131,7 +155,14 @@ def build_executive_brief(comparison: ScenarioComparison) -> ExecutiveBrief:
         for metric_name in METRIC_NAMES
     )
     constraints = _constraints(metrics)
+    governance = _governance(comparison, status)
+    report_duration_seconds = (
+        duration_seconds
+        if duration_seconds is not None
+        else perf_counter() - started_at
+    )
     brief = ExecutiveBrief(
+        brief_schema_version=_BRIEF_SCHEMA_VERSION,
         decision_status=status,
         recommendation=recommendation,
         outcome_deltas=outcomes,
@@ -140,11 +171,19 @@ def build_executive_brief(comparison: ScenarioComparison) -> ExecutiveBrief:
         ),
         constraints=constraints,
         downside_triggers=_downside_triggers(constraints, metrics),
+        governance=governance,
+        actions=_execution_actions(
+            comparison,
+            status=status,
+            constraints=constraints,
+            recommendation=recommendation,
+            governance=governance,
+        ),
         assumptions=_assumptions(comparison),
         provenance=_provenance(
             comparison,
-            created_at=created_at,
-            duration_seconds=perf_counter() - started_at,
+            created_at=report_created_at,
+            duration_seconds=report_duration_seconds,
         ),
         digest="0" * 64,
     )
@@ -161,6 +200,10 @@ def validate_executive_brief(
     if brief_content_digest(brief) != brief.digest:
         raise InvariantViolation(
             "brief_digest", "brief content does not match its digest"
+        )
+    if brief.brief_schema_version != _BRIEF_SCHEMA_VERSION:
+        raise InvariantViolation(
+            "brief_schema_version", "brief schema version is unsupported"
         )
     if brief.provenance.created_at.tzinfo is None:
         raise InvariantViolation(
@@ -233,6 +276,21 @@ def validate_executive_brief(
         raise InvariantViolation(
             "brief_downside_triggers",
             "brief downside triggers are not supported by metrics",
+        )
+    expected_governance = _governance(comparison, expected_status)
+    if brief.governance != expected_governance:
+        raise InvariantViolation(
+            "brief_governance", "brief governance is stale or unsupported"
+        )
+    if brief.actions != _execution_actions(
+        comparison,
+        status=expected_status,
+        constraints=expected_constraints,
+        recommendation=expected_recommendation,
+        governance=expected_governance,
+    ):
+        raise InvariantViolation(
+            "brief_actions", "brief actions are stale or unsupported"
         )
     if brief.assumptions != _assumptions(comparison):
         raise InvariantViolation(
@@ -358,6 +416,99 @@ def _downside_triggers(
         )
         for constraint in constraints
     )
+
+
+def _governance(
+    comparison: ScenarioComparison, status: DecisionStatus
+) -> DecisionGovernance:
+    status_label = {
+        "adopt": "adopt",
+        "conditional": "adopt with guardrails",
+        "do_not_adopt": "do not adopt",
+    }[status]
+    return DecisionGovernance(
+        decision_owner="Managing Director",
+        decision_record_action=(
+            f"Record the '{status_label}' recommendation and comparison digest "
+            "in the decision register before implementation."
+        ),
+        review_date=(
+            comparison.candidate_experiment_created_at + timedelta(days=30)
+        ).date(),
+    )
+
+
+def _execution_actions(
+    comparison: ScenarioComparison,
+    *,
+    status: DecisionStatus,
+    constraints: tuple[DecisionConstraint, ...],
+    recommendation: Recommendation,
+    governance: DecisionGovernance,
+) -> tuple[ExecutionAction, ...]:
+    reference_date = comparison.candidate_experiment_created_at.date()
+    decision_label = {
+        "adopt": "adoption",
+        "conditional": "conditional adoption",
+        "do_not_adopt": "non-adoption",
+    }[status]
+    actions = [
+        ExecutionAction(
+            action_id="record-decision",
+            title=f"Record {decision_label} decision",
+            owner=governance.decision_owner,
+            due_date=reference_date + timedelta(days=7),
+            evidence_metric_ids=recommendation.evidence_metric_ids,
+            completion_evidence=(
+                "Decision-register entry containing the recommendation, "
+                "comparison digest and named guardrails."
+            ),
+        )
+    ]
+    for constraint in constraints:
+        metric_label = constraint.metric_name.replace("_", " ")
+        actions.append(
+            ExecutionAction(
+                action_id=f"review-{constraint.metric_name.replace('_', '-')}",
+                title=f"Review {metric_label} guardrail",
+                owner=_metric_owner(constraint.metric_name),
+                due_date=governance.review_date,
+                evidence_metric_ids=(constraint.metric_name,),
+                completion_evidence=(
+                    f"Actual {metric_label} result compared with the simulated "
+                    "guardrail risk and documented in the decision register."
+                ),
+            )
+        )
+    if not constraints:
+        actions.append(
+            ExecutionAction(
+                action_id="review-value-realisation",
+                title="Review value realisation",
+                owner="Finance Director",
+                due_date=governance.review_date,
+                evidence_metric_ids=("ebitda", "free_cash_flow"),
+                completion_evidence=(
+                    "Actual EBITDA and free cash flow reconciled to the paired "
+                    "experiment means."
+                ),
+            )
+        )
+    return tuple(actions)
+
+
+def _metric_owner(metric_name: MetricName) -> str:
+    if metric_name in {
+        "ebitda",
+        "free_cash_flow",
+        "closing_cash",
+        "peak_revolver",
+        "rescue_funding",
+    }:
+        return "Finance Director"
+    if metric_name == "revenue":
+        return "Commercial Director"
+    return "Operations Director"
 
 
 def _directional_difference(metric: MetricComparison) -> float:

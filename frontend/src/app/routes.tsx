@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 
+import { ExecutiveReportPage } from "../features/reports/ExecutiveReportPage";
 import { ScenarioComparePage } from "../features/scenarios/ScenarioComparePage";
 import { ScenarioBuilder } from "../features/scenarios/ScenarioBuilder";
 import { AppShell } from "./AppShell";
@@ -56,6 +57,10 @@ export function AppRoutes() {
               title="Decisions"
             />
           }
+        />
+        <Route
+          path="reports/:experimentId"
+          element={<ExecutiveReportPage />}
         />
         <Route
           path="reports"

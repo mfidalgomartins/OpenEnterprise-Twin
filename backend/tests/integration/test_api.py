@@ -119,6 +119,32 @@ def test_create_run_compare_and_report(tmp_path: Path) -> None:
         }
         assert report["provenance"]["comparison_digest"] == comparison["digest"]
 
+        original_created_at = report["provenance"]["created_at"]
+        with app.state.services.session_factory() as session, session.begin():
+            stored = session.get(ExperimentRecord, int(candidate_run["id"]))
+            assert stored is not None
+            assert stored.brief_payload is not None
+            legacy_payload = dict(stored.brief_payload)
+            legacy_payload.pop("governance")
+            legacy_payload.pop("actions")
+            legacy_payload.pop("brief_schema_version")
+            stored.brief_payload = legacy_payload
+
+        upgraded_response = client.get(
+            f"/api/v1/experiments/{candidate_run['id']}/report"
+        )
+        assert upgraded_response.status_code == 200
+        upgraded = upgraded_response.json()
+        assert upgraded["brief_schema_version"] == "0.2.0"
+        assert upgraded["governance"]["decision_owner"] == "Managing Director"
+        assert upgraded["actions"]
+        assert upgraded["provenance"]["created_at"] == original_created_at
+
+        repeated_response = client.get(
+            f"/api/v1/experiments/{candidate_run['id']}/report"
+        )
+        assert repeated_response.json()["digest"] == upgraded["digest"]
+
 
 def test_api_exposes_reference_resources_and_scenario_collection(
     tmp_path: Path,

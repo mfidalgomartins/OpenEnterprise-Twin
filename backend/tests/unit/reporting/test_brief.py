@@ -1,3 +1,4 @@
+from datetime import timedelta
 from decimal import Decimal
 from typing import cast
 
@@ -145,6 +146,37 @@ def test_recommendation_cites_only_computed_metric_evidence() -> None:
     assert brief.digest == brief_content_digest(brief)
 
 
+def test_brief_freezes_decision_governance_and_evidence_linked_actions() -> None:
+    comparison = _comparison(liquidity_stress=True)
+
+    brief = build_executive_brief(comparison)
+
+    assert brief.governance.decision_owner == "Managing Director"
+    assert brief.governance.review_date == (
+        comparison.candidate_experiment_created_at + timedelta(days=30)
+    ).date()
+    assert "comparison digest" in brief.governance.decision_record_action.lower()
+    assert brief.actions
+    assert brief.actions[0].action_id == "record-decision"
+    assert all(action.owner for action in brief.actions)
+    assert all(
+        action.due_date <= brief.governance.review_date for action in brief.actions
+    )
+    assert all(
+        set(action.evidence_metric_ids) <= set(comparison.metrics)
+        for action in brief.actions
+    )
+    constrained_metrics = {
+        constraint.metric_name for constraint in brief.constraints
+    }
+    action_metrics = {
+        metric_name
+        for action in brief.actions
+        for metric_name in action.evidence_metric_ids
+    }
+    assert constrained_metrics <= action_metrics
+
+
 def test_brief_explains_only_policy_levers_present_in_candidate() -> None:
     comparison = _comparison()
     brief = build_executive_brief(comparison)
@@ -214,6 +246,8 @@ def test_brief_is_deterministic_and_collections_are_immutable() -> None:
     assert first.outcome_deltas == second.outcome_deltas
     assert first.mechanisms == second.mechanisms
     assert first.constraints == second.constraints
+    assert first.governance == second.governance
+    assert first.actions == second.actions
     assert isinstance(first.outcome_deltas, tuple)
     assert isinstance(first.mechanisms, tuple)
     immutable_outcomes = cast(list[object], first.outcome_deltas)
@@ -252,4 +286,19 @@ def test_brief_validation_rejects_unsupported_narrative_after_rehash() -> None:
     )
 
     with pytest.raises(InvariantViolation, match="brief_evidence"):
+        validate_executive_brief(tampered, comparison)
+
+
+def test_brief_validation_rejects_tampered_execution_action_after_rehash() -> None:
+    comparison = _comparison(liquidity_stress=True)
+    brief = build_executive_brief(comparison)
+    action = brief.actions[0].model_copy(update={"owner": "Unverified owner"})
+    tampered = brief.model_copy(
+        update={"actions": (action, *brief.actions[1:]), "digest": "0" * 64}
+    )
+    tampered = tampered.model_copy(
+        update={"digest": brief_content_digest(tampered)}
+    )
+
+    with pytest.raises(InvariantViolation, match="brief_actions"):
         validate_executive_brief(tampered, comparison)

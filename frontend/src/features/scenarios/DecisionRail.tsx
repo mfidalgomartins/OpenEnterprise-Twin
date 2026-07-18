@@ -1,4 +1,6 @@
-import { formatPercent } from "../../lib/format";
+import { Link } from "react-router-dom";
+
+import { formatDate, formatPercent } from "../../lib/format";
 import { metricLabels } from "./formatScenario";
 import type { ExecutiveBrief } from "./types";
 
@@ -9,10 +11,11 @@ const decisionLabels = {
 } as const;
 
 interface DecisionRailProps {
+  experimentId: string;
   report: ExecutiveBrief;
 }
 
-export function DecisionRail({ report }: DecisionRailProps) {
+export function DecisionRail({ experimentId, report }: DecisionRailProps) {
   return (
     <aside aria-labelledby="decision-rail-title" className="decision-rail">
       <section className="decision-rail__section">
@@ -64,6 +67,26 @@ export function DecisionRail({ report }: DecisionRailProps) {
         ) : (
           <p>No material constraint was identified.</p>
         )}
+      </section>
+
+      <section className="decision-rail__section">
+        <h3>Decision governance</h3>
+        <dl className="decision-rail__governance">
+          <div>
+            <dt>Owner</dt>
+            <dd>{report.governance.decision_owner}</dd>
+          </div>
+          <div>
+            <dt>Review</dt>
+            <dd>{formatDate(report.governance.review_date)}</dd>
+          </div>
+        </dl>
+        <Link
+          className="decision-rail__action"
+          to={`/reports/${encodeURIComponent(experimentId)}`}
+        >
+          Open published executive brief
+        </Link>
       </section>
 
       <section className="decision-rail__section">

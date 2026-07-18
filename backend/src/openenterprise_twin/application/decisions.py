@@ -1,5 +1,8 @@
 """Application service for persisted comparisons and decision briefs."""
 
+from collections.abc import Mapping
+from datetime import datetime
+
 from openenterprise_twin.application.ports import (
     ArtifactReader,
     DecisionEvidenceRepository,
@@ -82,6 +85,22 @@ def get_or_build_brief(
 ) -> ExecutiveBrief:
     record = _required_record(repository, experiment_id)
     if record.brief_payload is not None:
+        if _is_legacy_brief(record.brief_payload):
+            comparison = get_or_build_comparison(
+                experiment_id,
+                repository=repository,
+                artifact_store=artifact_store,
+            )
+            created_at, duration_seconds = _legacy_brief_timing(
+                record.brief_payload
+            )
+            brief = build_executive_brief(
+                comparison,
+                created_at=created_at,
+                duration_seconds=duration_seconds,
+            )
+            repository.store_brief(record.id, brief.model_dump(mode="json"))
+            return brief
         return ExecutiveBrief.model_validate(record.brief_payload)
     comparison = get_or_build_comparison(
         experiment_id,
@@ -91,6 +110,47 @@ def get_or_build_brief(
     brief = build_executive_brief(comparison)
     repository.store_brief(record.id, brief.model_dump(mode="json"))
     return brief
+
+
+def _is_legacy_brief(payload: Mapping[str, object]) -> bool:
+    return (
+        "brief_schema_version" not in payload
+        and "governance" not in payload
+        and "actions" not in payload
+    )
+
+
+def _legacy_brief_timing(
+    payload: Mapping[str, object],
+) -> tuple[datetime, float]:
+    provenance = payload.get("provenance")
+    if not isinstance(provenance, Mapping):
+        raise DecisionEvidenceError(
+            "brief_snapshot_incompatible",
+            "The persisted legacy brief has no valid provenance.",
+        )
+    raw_created_at = provenance.get("created_at")
+    raw_duration = provenance.get("duration_seconds")
+    if isinstance(raw_duration, bool) or not isinstance(
+        raw_duration, (int, float)
+    ):
+        raise DecisionEvidenceError(
+            "brief_snapshot_incompatible",
+            "The persisted legacy brief has invalid timing provenance.",
+        )
+    try:
+        created_at = (
+            raw_created_at
+            if isinstance(raw_created_at, datetime)
+            else datetime.fromisoformat(str(raw_created_at).replace("Z", "+00:00"))
+        )
+        duration_seconds = float(raw_duration)
+    except (TypeError, ValueError) as error:
+        raise DecisionEvidenceError(
+            "brief_snapshot_incompatible",
+            "The persisted legacy brief has invalid timing provenance.",
+        ) from error
+    return created_at, duration_seconds
 
 
 def _load_experiment_result(payload: object) -> ExperimentResult:

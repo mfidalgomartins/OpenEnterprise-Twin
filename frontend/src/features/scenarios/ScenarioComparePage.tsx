@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { DecisionHeader } from "./DecisionHeader";
 import { DecisionRail } from "./DecisionRail";
 import { EvidenceSection } from "./EvidenceSection";
+import { ExecutionSection } from "./ExecutionSection";
 import { MechanismSection } from "./MechanismSection";
 import { OutcomeSummary } from "./OutcomeSummary";
 import { OutcomeTrajectory } from "./OutcomeTrajectory";
@@ -102,7 +103,7 @@ export function ScenarioComparePage() {
       <RecalculationStatus hasEvidence isFetching={isFetching} />
       <div className="decision-room__layout">
         <DecisionHeader comparison={comparison} report={report} />
-        <DecisionRail report={report} />
+        <DecisionRail experimentId={experimentId} report={report} />
         <OutcomeSummary outcomes={report.outcome_deltas} />
         <div className="decision-room__evidence">
           <section
@@ -120,6 +121,7 @@ export function ScenarioComparePage() {
           </section>
           <MechanismSection mechanisms={report.mechanisms} />
           <SensitivitySection metrics={comparison.metric_results} />
+          <ExecutionSection report={report} />
           <EvidenceSection experimentId={experimentId} report={report} />
         </div>
       </div>

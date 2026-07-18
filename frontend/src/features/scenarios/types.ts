@@ -174,6 +174,21 @@ export interface DownsideTrigger {
   detail: string;
 }
 
+export interface DecisionGovernance {
+  decision_owner: string;
+  decision_record_action: string;
+  review_date: string;
+}
+
+export interface ExecutionAction {
+  action_id: string;
+  title: string;
+  owner: string;
+  due_date: string;
+  evidence_metric_ids: MetricName[];
+  completion_evidence: string;
+}
+
 export interface BriefProvenance {
   comparison_digest: string;
   baseline_experiment_digest: string;
@@ -200,12 +215,15 @@ export interface BriefProvenance {
 }
 
 export interface ExecutiveBrief {
+  brief_schema_version: string;
   decision_status: DecisionStatus;
   recommendation: Recommendation;
   outcome_deltas: OutcomeDelta[];
   mechanisms: MechanismNarrative[];
   constraints: DecisionConstraint[];
   downside_triggers: DownsideTrigger[];
+  governance: DecisionGovernance;
+  actions: ExecutionAction[];
   assumptions: string[];
   provenance: BriefProvenance;
   digest: string;

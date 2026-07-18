@@ -173,6 +173,7 @@ const comparisonFixture = {
 };
 
 const reportFixture = {
+  brief_schema_version: "0.2.0",
   decision_status: "conditional",
   recommendation: {
     status: "conditional",
@@ -223,6 +224,32 @@ const reportFixture = {
       metric_name: "closing_cash",
       breach_probability: 0.25,
       detail: "Reassess if the closing_cash guardrail risk persists above the simulated level.",
+    },
+  ],
+  governance: {
+    decision_owner: "Managing Director",
+    decision_record_action:
+      "Record the 'adopt with guardrails' recommendation and comparison digest in the decision register before implementation.",
+    review_date: "2026-08-15",
+  },
+  actions: [
+    {
+      action_id: "record-decision",
+      title: "Record conditional adoption decision",
+      owner: "Managing Director",
+      due_date: "2026-07-23",
+      evidence_metric_ids: ["ebitda", "closing_cash"],
+      completion_evidence:
+        "Decision-register entry containing the recommendation, comparison digest and named guardrails.",
+    },
+    {
+      action_id: "review-closing-cash",
+      title: "Review closing cash guardrail",
+      owner: "Finance Director",
+      due_date: "2026-08-15",
+      evidence_metric_ids: ["closing_cash"],
+      completion_evidence:
+        "Actual closing cash result compared with the simulated guardrail risk and documented in the decision register.",
     },
   ],
   assumptions: [
@@ -340,6 +367,11 @@ describe("ScenarioComparePage", () => {
     expect(screen.getByText("Model 0.1.0")).toBeVisible();
     expect(screen.getByText("4 paired replications")).toBeVisible();
     expect(screen.getByText("demand.forecast 1.3.0")).toBeVisible();
+    const execution = screen.getByRole("region", { name: "Execution" });
+    expect(within(execution).getByText("Finance Director")).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Open published executive brief" }),
+    ).toHaveAttribute("href", "/reports/experiment-42");
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual(
