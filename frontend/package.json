@@ -6,12 +6,14 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
+    "e2e": "playwright test",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest",
     "typecheck": "tsc --noEmit --pretty false",
     "lint": "eslint . --max-warnings 0"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "5.2.8",
     "@tanstack/react-query": "5.101.2",
     "react": "19.2.7",
     "react-dom": "19.2.7",
@@ -19,6 +21,7 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.61.1",
     "@testing-library/jest-dom": "6.9.1",
     "@testing-library/react": "16.3.2",
     "@testing-library/user-event": "14.6.1",

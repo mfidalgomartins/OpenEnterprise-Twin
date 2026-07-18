@@ -281,7 +281,7 @@ a {
   }
 }
 
-@media (max-width: 47.9375rem) {
+@media (max-width: 52rem) {
   .app-header__inner {
     display: flex;
     padding-inline: 0;
@@ -360,6 +360,40 @@ a {
 
   .route-intro {
     padding-block: var(--space-12);
+  }
+}
+
+@media (max-width: 32rem) {
+  .model-context {
+    min-height: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .model-context__company {
+    min-height: 2.75rem;
+    grid-column: 1 / -1;
+    padding-inline: var(--space-4);
+    border-block-end: 0.0625rem solid var(--color-line);
+    border-inline-end: 0;
+    font-size: var(--text-meta);
+  }
+
+  .model-context__item {
+    min-height: 3.25rem;
+    padding-block: var(--space-2);
+  }
+
+  .model-context__item:nth-child(-n + 2) {
+    border-block-end: 0.0625rem solid var(--color-line);
+  }
+
+  .model-context__item:nth-child(even) {
+    border-inline-end: 0;
+  }
+
+  .model-context__item dt,
+  .model-context__item dd {
+    overflow-wrap: normal;
   }
 }
 

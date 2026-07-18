@@ -87,4 +87,15 @@ describe("AppShell", () => {
     expect(screen.getByText("Model version")).toBeVisible();
     expect(screen.getByText("Data freshness")).toBeVisible();
   });
+
+  it("associates every operational value with a preceding term", () => {
+    renderShell();
+
+    const reportingTerm = screen.getByText("Reporting date");
+    const reportingValue = screen.getByText("May 16, 2025");
+
+    expect(reportingTerm.tagName).toBe("DT");
+    expect(reportingValue.tagName).toBe("DD");
+    expect(reportingTerm.nextElementSibling).toBe(reportingValue);
+  });
 });

@@ -395,11 +395,11 @@ git commit -m "feat: expose durable scenario experiments"
 - Produces a horizontal shell with `Briefing`, `Twin`, `Scenarios`, `Decisions` and `Reports` destinations.
 - Produces shared semantic tokens for canvas, ink, muted, line, decision, comparison and risk.
 
-- [ ] **Step 1: Generate and approve the complete primary-screen visual concept**
+- [x] **Step 1: Generate and approve the complete primary-screen visual concept**
 
 The concept must show the decision sentence, outcome canvas, sticky decision rail, impact/mechanism/sensitivity chapters and responsive continuation. Extract the final tokens and component anatomy into `tokens.css` before component implementation.
 
-- [ ] **Step 2: Write shell behavior tests**
+- [x] **Step 2: Write shell behavior tests**
 
 ```tsx
 it("keeps executive navigation visible without a sidebar", () => {
@@ -410,16 +410,16 @@ it("keeps executive navigation visible without a sidebar", () => {
 });
 ```
 
-- [ ] **Step 3: Implement the shell and design primitives**
+- [x] **Step 3: Implement the shell and design primitives**
 
 Use Inter Variable, 44px minimum interactive targets, 150–250ms state transitions, visible focus and reduced-motion support. No uppercase eyebrow, decorative badge, gradient, glass effect or generic metric-card family is permitted.
 
-- [ ] **Step 4: Verify frontend unit tests**
+- [x] **Step 4: Verify frontend unit tests**
 
 Run: `cd frontend && npm run test -- --run && npm run typecheck && npm run lint`  
 Expected: all commands succeed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend

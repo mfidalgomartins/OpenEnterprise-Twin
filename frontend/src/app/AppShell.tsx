@@ -17,20 +17,20 @@ function ModelContext() {
       <p className="model-context__company">Northstar Components</p>
       <dl className="model-context__metadata">
         <div className="model-context__item">
-          <dd>May 16, 2025</dd>
           <dt>Reporting date</dt>
+          <dd>May 16, 2025</dd>
         </div>
         <div className="model-context__item">
-          <dd>EUR</dd>
           <dt>Currency</dt>
+          <dd>EUR</dd>
         </div>
         <div className="model-context__item">
-          <dd>Model v0.1</dd>
           <dt>Model version</dt>
+          <dd>Model v0.1</dd>
         </div>
         <div className="model-context__item">
-          <dd>Fresh 2h ago</dd>
           <dt>Data freshness</dt>
+          <dd>Fresh 2h ago</dd>
         </div>
       </dl>
     </div>
