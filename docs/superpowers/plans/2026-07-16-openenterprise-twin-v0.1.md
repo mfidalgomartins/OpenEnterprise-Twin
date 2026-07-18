@@ -555,28 +555,28 @@ git commit -m "feat: publish immutable executive briefs"
 - Produces: `make dev`, `make test`, `make lint`, `make demo` and `make build`.
 - Produces: a CI gate covering backend, frontend, migration, production builds and E2E.
 
-- [ ] **Step 1: Implement one-command local operation**
+- [x] **Step 1: Implement one-command local operation**
 
 `make dev` starts PostgreSQL, migrates, seeds Northstar, starts API and frontend. `make demo` creates the flagship scenario and prints its URL and reproducibility identifiers.
 
-- [ ] **Step 2: Write final documentation**
+- [x] **Step 2: Write final documentation**
 
 README order: product thesis, decision-room visual, five-minute demo, why it is different, architecture, model credibility, extension model, roadmap, limitations, contributing and licence. Model documentation includes equations, units, stochastic assumptions and invariant definitions.
 
-- [ ] **Step 3: Implement CI**
+- [x] **Step 3: Implement CI**
 
 Run backend lint/type/test, frontend lint/type/test, PostgreSQL integration tests, production builds and Playwright E2E. Cache dependencies by lockfile and upload only final test reports on failure.
 
-- [ ] **Step 4: Execute the completion audit**
+- [x] **Step 4: Execute the completion audit**
 
 Run: `make lint && make test && make build && make e2e`  
 Expected: all commands succeed from a clean checkout with no untracked generated files.
 
-- [ ] **Step 5: Perform visual fidelity review**
+- [x] **Step 5: Perform visual fidelity review**
 
 Capture the final 1440×1000 scenario comparison, inspect it beside the accepted concept with `view_image`, and correct every material mismatch in typography, layout, color, chart anatomy, spacing, responsive behavior and interaction state.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add README.md docs Makefile .env.example .github backend/Dockerfile frontend/Dockerfile frontend/e2e
@@ -585,13 +585,13 @@ git commit -m "chore: prepare OpenEnterprise Twin 0.1 release"
 
 ## Post-0.1 roadmap
 
-### 0.2 — Policy Studio
+### 0.2 — Optimization Workbench
 
 - Add deterministic candidate screening and Monte Carlo finalist evaluation.
 - Add efficient-frontier comparison, tornado sensitivity and driver decomposition.
 - Add OR-Tools mixed-integer adapter for capacity and sourcing decisions.
 - Add plugin discovery through `openenterprise_twin.plugins` entry points.
-- Add PDF generation from the immutable report route.
+- Add calibration-aware candidate ranking and portfolio-level trade-off views.
 
 ### 0.3 — Enterprise Extension
 

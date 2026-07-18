@@ -1,0 +1,7 @@
+.pytest_cache
+.mypy_cache
+.ruff_cache
+dist
+test-results
+artifacts
+tests

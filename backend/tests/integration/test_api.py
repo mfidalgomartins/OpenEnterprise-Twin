@@ -135,15 +135,32 @@ def test_create_run_compare_and_report(tmp_path: Path) -> None:
         )
         assert upgraded_response.status_code == 200
         upgraded = upgraded_response.json()
-        assert upgraded["brief_schema_version"] == "0.2.0"
+        assert upgraded["brief_schema_version"] == "0.2.1"
         assert upgraded["governance"]["decision_owner"] == "Managing Director"
         assert upgraded["actions"]
         assert upgraded["provenance"]["created_at"] == original_created_at
 
+        with app.state.services.session_factory() as session, session.begin():
+            stored = session.get(ExperimentRecord, int(candidate_run["id"]))
+            assert stored is not None
+            patch_payload = dict(upgraded)
+            patch_payload["brief_schema_version"] = "0.2.0"
+            stored.brief_payload = patch_payload
+
+        patch_upgraded_response = client.get(
+            f"/api/v1/experiments/{candidate_run['id']}/report"
+        )
+        assert patch_upgraded_response.status_code == 200
+        patch_upgraded = patch_upgraded_response.json()
+        assert patch_upgraded["brief_schema_version"] == "0.2.1"
+        assert patch_upgraded["recommendation"]["rationale"][0].startswith(
+            "EBITDA:"
+        )
+
         repeated_response = client.get(
             f"/api/v1/experiments/{candidate_run['id']}/report"
         )
-        assert repeated_response.json()["digest"] == upgraded["digest"]
+        assert repeated_response.json()["digest"] == patch_upgraded["digest"]
 
 
 def test_api_exposes_reference_resources_and_scenario_collection(

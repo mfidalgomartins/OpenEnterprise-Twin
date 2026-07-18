@@ -52,7 +52,7 @@ const comparison = {
 };
 
 const report = {
-  brief_schema_version: "0.2.0",
+  brief_schema_version: "0.2.1",
   decision_status: "conditional",
   recommendation: {
     status: "conditional",

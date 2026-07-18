@@ -23,6 +23,20 @@ class MechanismNarrative(DomainModel):
     detail: str
 
 
+_METRIC_LABELS = {
+    "revenue": "Revenue",
+    "ebitda": "EBITDA",
+    "free_cash_flow": "Free cash flow",
+    "closing_cash": "Closing cash",
+    "otif": "OTIF",
+    "cancellation_rate": "Cancellation rate",
+    "backlog_units": "Backlog units",
+    "capacity_utilization": "Capacity utilization",
+    "peak_revolver": "Peak revolver",
+    "rescue_funding": "Rescue funding",
+}
+
+
 def build_mechanism_narratives(
     policy_levers: PolicyLevers,
 ) -> tuple[MechanismNarrative, ...]:
@@ -114,6 +128,13 @@ def format_metric_value(metric_name: str, value: float) -> str:
         "peak_revolver",
         "rescue_funding",
     }:
-        return f"€{value / 100:,.0f}"
+        euros = value / 100
+        sign = "-" if euros < 0 else ""
+        return f"{sign}€{abs(euros):,.0f}"
     return f"{value:,.1f}"
 
+
+def format_metric_label(metric_name: str) -> str:
+    """Return the executive display label for a stable metric identifier."""
+
+    return _METRIC_LABELS.get(metric_name, metric_name.replace("_", " ").capitalize())

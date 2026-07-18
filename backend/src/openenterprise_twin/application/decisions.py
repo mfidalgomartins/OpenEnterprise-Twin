@@ -10,6 +10,7 @@ from openenterprise_twin.application.ports import (
 )
 from openenterprise_twin.domain.errors import InvariantViolation
 from openenterprise_twin.reporting.brief import (
+    BRIEF_SCHEMA_VERSION,
     ExecutiveBrief,
     build_executive_brief,
 )
@@ -114,9 +115,9 @@ def get_or_build_brief(
 
 def _is_legacy_brief(payload: Mapping[str, object]) -> bool:
     return (
-        "brief_schema_version" not in payload
-        and "governance" not in payload
-        and "actions" not in payload
+        payload.get("brief_schema_version") != BRIEF_SCHEMA_VERSION
+        or "governance" not in payload
+        or "actions" not in payload
     )
 
 

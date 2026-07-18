@@ -14,6 +14,7 @@ from openenterprise_twin.reporting.brief import (
     build_executive_brief,
     validate_executive_brief,
 )
+from openenterprise_twin.reporting.narrative import format_metric_value
 from openenterprise_twin.scenarios.comparison import (
     ScenarioComparison,
     compare_experiments,
@@ -144,6 +145,23 @@ def test_recommendation_cites_only_computed_metric_evidence() -> None:
     assert brief.provenance.created_at.tzinfo is not None
     assert brief.provenance.duration_seconds >= 0
     assert brief.digest == brief_content_digest(brief)
+
+
+def test_executive_narrative_uses_display_labels_not_metric_identifiers() -> None:
+    comparison = _comparison(liquidity_stress=True)
+
+    brief = build_executive_brief(comparison)
+
+    assert brief.brief_schema_version == "0.2.1"
+    assert brief.recommendation.rationale[0].startswith("EBITDA:")
+    assert format_metric_value("ebitda", -12_300) == "-€123"
+    assert brief.constraints
+    assert all("_" not in constraint.detail for constraint in brief.constraints)
+    assert all("_" not in trigger.detail for trigger in brief.downside_triggers)
+    assert any(
+        trigger.detail.startswith("Reassess if the closing cash")
+        for trigger in brief.downside_triggers
+    )
 
 
 def test_brief_freezes_decision_governance_and_evidence_linked_actions() -> None:

@@ -14,6 +14,7 @@ from openenterprise_twin.domain.errors import InvariantViolation
 from openenterprise_twin.reporting.narrative import (
     MechanismNarrative,
     build_mechanism_narratives,
+    format_metric_label,
     format_metric_value,
 )
 from openenterprise_twin.scenarios.comparison import (
@@ -29,7 +30,7 @@ from openenterprise_twin.simulation.experiment import (
 
 DecisionStatus = Literal["adopt", "conditional", "do_not_adopt"]
 _MAX_ADOPT_BREACH_PROBABILITY = 0.0
-_BRIEF_SCHEMA_VERSION = "0.2.0"
+BRIEF_SCHEMA_VERSION = "0.2.1"
 
 
 class Recommendation(DomainModel):
@@ -162,7 +163,7 @@ def build_executive_brief(
         else perf_counter() - started_at
     )
     brief = ExecutiveBrief(
-        brief_schema_version=_BRIEF_SCHEMA_VERSION,
+        brief_schema_version=BRIEF_SCHEMA_VERSION,
         decision_status=status,
         recommendation=recommendation,
         outcome_deltas=outcomes,
@@ -201,7 +202,7 @@ def validate_executive_brief(
         raise InvariantViolation(
             "brief_digest", "brief content does not match its digest"
         )
-    if brief.brief_schema_version != _BRIEF_SCHEMA_VERSION:
+    if brief.brief_schema_version != BRIEF_SCHEMA_VERSION:
         raise InvariantViolation(
             "brief_schema_version", "brief schema version is unsupported"
         )
@@ -393,7 +394,7 @@ def _constraints(
                 severity=(
                     "breach" if metric.candidate_breach_probability >= 0.50 else "watch"
                 ),
-                detail=f"{metric_name}: {'; '.join(details)}.",
+                detail=f"{format_metric_label(metric_name)}: {'; '.join(details)}.",
             )
         )
     return tuple(constraints)
@@ -410,7 +411,8 @@ def _downside_triggers(
                 metrics[constraint.metric_name].candidate_breach_probability
             ),
             detail=(
-                f"Reassess if the {constraint.metric_name} guardrail risk "
+                f"Reassess if the {_sentence_metric_label(constraint.metric_name)} "
+                "guardrail risk "
                 "persists above the simulated level."
             ),
         )
@@ -511,6 +513,11 @@ def _metric_owner(metric_name: MetricName) -> str:
     return "Operations Director"
 
 
+def _sentence_metric_label(metric_name: MetricName) -> str:
+    label = format_metric_label(metric_name)
+    return label if label.isupper() else f"{label[0].lower()}{label[1:]}"
+
+
 def _directional_difference(metric: MetricComparison) -> float:
     return (
         metric.mean_difference
@@ -594,7 +601,8 @@ def _metric_evidence_clause(
     metric_name: MetricName, metric: MetricComparison
 ) -> str:
     return (
-        f"{metric_name}: {format_metric_value(metric_name, metric.baseline_mean)} to "
+        f"{format_metric_label(metric_name)}: "
+        f"{format_metric_value(metric_name, metric.baseline_mean)} to "
         f"{format_metric_value(metric_name, metric.candidate_mean)} "
         f"(paired delta {format_metric_value(metric_name, metric.mean_difference)}, "
         f"{metric.probability_of_improvement:.1%} probability of improvement)."
