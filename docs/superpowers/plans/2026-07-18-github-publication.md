@@ -71,13 +71,13 @@ Replace the three Task 1 checkboxes with `[x]` after validation.
 - Consumes: authenticated `gh` session and clean Git worktree.
 - Produces: GitHub repository metadata, `origin` remote and a tracked public `main` branch.
 
-- [ ] **Step 1: Verify the repository can be relocated without collision**
+- [x] **Step 1: Verify the repository can be relocated without collision**
 
 Run: `test ! -e /Users/miguelfidalgo/Documents/OpenEnterprise-Twin && git status --short`
 
 Expected: exit code `0` and no worktree output after Task 1 is committed.
 
-- [ ] **Step 2: Relocate the checkout and create the public GitHub repository**
+- [x] **Step 2: Relocate the checkout and create the public GitHub repository**
 
 Run from `/Users/miguelfidalgo/Documents/Codex/2026-07-16`:
 
@@ -91,7 +91,7 @@ Then run from the new root:
 gh repo create mfidalgomartins/OpenEnterprise-Twin --public --source=. --remote=origin --push
 ```
 
-- [ ] **Step 3: Set public metadata and push the final presentation commit**
+- [x] **Step 3: Set public metadata and push the final presentation commit**
 
 Run:
 
@@ -109,7 +109,7 @@ gh repo edit mfidalgomartins/OpenEnterprise-Twin \
 git push origin main
 ```
 
-- [ ] **Step 4: Verify the public surface**
+- [x] **Step 4: Verify the public surface**
 
 Run:
 
@@ -121,6 +121,6 @@ git status -sb
 
 Expected: public visibility, the specified description and topics, `origin` pointing to GitHub, and a clean tracking `main` branch.
 
-- [ ] **Step 5: Mark Task 2 complete in this plan**
+- [x] **Step 5: Mark Task 2 complete in this plan**
 
 Replace the five Task 2 checkboxes with `[x]` after verification.
