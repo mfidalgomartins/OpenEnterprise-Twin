@@ -1,4 +1,20 @@
+<div align="center">
+
 # OpenEnterprise Twin
+
+**Evidence-linked Monte Carlo decision twin for commercial, operational and liquidity policies.**
+
+[![CI](https://github.com/mfidalgomartins/OpenEnterprise-Twin/actions/workflows/ci.yml/badge.svg)](https://github.com/mfidalgomartins/OpenEnterprise-Twin/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](backend/pyproject.toml)
+[![React](https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white)](frontend/package.json)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)](docker-compose.yml)
+[![License](https://img.shields.io/badge/License-Apache--2.0-2E7D32)](LICENSE)
+
+[Run the flagship demo](#five-minute-demo) · [Explore architecture](docs/architecture.md) · [Read the model](docs/model.md) · [Contribute](docs/contributing.md)
+
+</div>
+
+> **Policy → paired simulation → evidence-linked recommendation → immutable executive brief.**
 
 ## Product thesis
 
