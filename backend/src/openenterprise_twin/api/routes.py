@@ -2,13 +2,14 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Response, Security, status
 from sqlalchemy.orm import Session
 
 from openenterprise_twin.api.dependencies import (
     AppServices,
     get_services,
     get_session,
+    require_principal,
 )
 from openenterprise_twin.api.errors import ApiProblemError
 from openenterprise_twin.api.schemas import (
@@ -22,6 +23,12 @@ from openenterprise_twin.application.decisions import (
     get_or_build_comparison,
 )
 from openenterprise_twin.application.experiments import ExperimentQueueFullError
+from openenterprise_twin.application.portfolio import (
+    DecisionPortfolio,
+    PolicyFrontier,
+    build_policy_frontier,
+    list_decision_portfolio,
+)
 from openenterprise_twin.domain.company import CompanyModel
 from openenterprise_twin.domain.errors import DomainValidationError
 from openenterprise_twin.domain.scenario import (
@@ -40,7 +47,11 @@ from openenterprise_twin.simulation.reference import (
     build_northstar_company,
 )
 
-router = APIRouter(prefix="/api/v1")
+public_router = APIRouter()
+router = APIRouter(
+    prefix="/api/v1",
+    dependencies=[Security(require_principal)],
+)
 SessionDependency = Annotated[Session, Depends(get_session)]
 ServicesDependency = Annotated[AppServices, Depends(get_services)]
 IdempotencyKey = Annotated[
@@ -82,7 +93,8 @@ def create_scenario(
     return _scenario_read(scenario)
 
 
-@router.get("/health")
+@public_router.get("/health", include_in_schema=False)
+@public_router.get("/api/v1/health", include_in_schema=False)
 def get_health() -> dict[str, str]:
     return {"status": "ok"}
 
@@ -98,11 +110,15 @@ def get_baseline() -> ScenarioRead:
 
 
 @router.get("/scenarios", response_model=tuple[ScenarioRead, ...])
-def list_scenarios(session: SessionDependency) -> tuple[ScenarioRead, ...]:
+def list_scenarios(
+    session: SessionDependency,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    after_id: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+) -> tuple[ScenarioRead, ...]:
     repository = ScenarioRepository(session)
     return tuple(
         _scenario_read(Scenario.model_validate(record.payload))
-        for record in repository.list()
+        for record in repository.list(limit=limit, after_id=after_id)
     )
 
 
@@ -154,6 +170,19 @@ def create_experiment(
             record = existing
         else:
             scenario = Scenario.model_validate(scenario_record.payload)
+            requested_periods = request.replications * scenario.horizon_days
+            if requested_periods > services.max_experiment_periods:
+                raise ApiProblemError(
+                    status=422,
+                    code="experiment_budget_exceeded",
+                    title="Experiment compute budget exceeded",
+                    detail=(
+                        f"This request needs {requested_periods:,} simulated "
+                        f"periods; the deployment limit is "
+                        f"{services.max_experiment_periods:,}. Reduce the "
+                        "replication count or scenario horizon."
+                    ),
+                )
             baseline_experiment_id = _resolve_baseline_experiment_id(
                 scenario,
                 experiments=experiments,
@@ -234,6 +263,33 @@ def get_report(
         )
     except DecisionEvidenceError as error:
         raise _decision_problem(error) from error
+
+
+@router.get("/decisions", response_model=DecisionPortfolio)
+def list_decisions(
+    services: ServicesDependency,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    before_id: Annotated[int | None, Query(gt=0)] = None,
+) -> DecisionPortfolio:
+    return list_decision_portfolio(
+        repository=services.decision_repository,
+        artifact_store=services.artifact_store,
+        limit=limit,
+        before_id=before_id,
+    )
+
+
+@router.get("/frontier", response_model=PolicyFrontier)
+def get_frontier(
+    services: ServicesDependency,
+    limit: Annotated[int, Query(ge=1, le=50)] = 50,
+) -> PolicyFrontier:
+    portfolio = list_decision_portfolio(
+        repository=services.decision_repository,
+        artifact_store=services.artifact_store,
+        limit=limit,
+    )
+    return build_policy_frontier(portfolio.items)
 
 
 def _resolve_baseline_experiment_id(

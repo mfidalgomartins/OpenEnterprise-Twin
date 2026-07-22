@@ -8,6 +8,7 @@ from time import monotonic, sleep
 
 import httpx
 from pydantic import BaseModel
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from openenterprise_twin.api.schemas import (
@@ -27,6 +28,7 @@ from openenterprise_twin.infrastructure.database import (
     create_database_engine,
     create_session_factory,
 )
+from openenterprise_twin.infrastructure.models import Base
 from openenterprise_twin.infrastructure.repositories import ScenarioRepository
 from openenterprise_twin.infrastructure.settings import Settings
 from openenterprise_twin.reporting.brief import ExecutiveBrief
@@ -133,7 +135,8 @@ def seed_northstar(session_factory: sessionmaker[Session]) -> bool:
             return True
         if existing.payload != expected_payload:
             raise DemoError(
-                "the persisted 'current-plan' scenario differs from Northstar 0.1.0"
+                "the persisted 'current-plan' scenario differs from the current "
+                "Northstar model version"
             )
     return False
 
@@ -144,6 +147,8 @@ def seed_from_settings(settings: Settings | None = None) -> bool:
     resolved_settings = settings or Settings()
     engine = create_database_engine(resolved_settings)
     try:
+        if make_url(resolved_settings.database_url).get_backend_name() == "sqlite":
+            Base.metadata.create_all(engine)
         return seed_northstar(create_session_factory(engine))
     finally:
         engine.dispose()

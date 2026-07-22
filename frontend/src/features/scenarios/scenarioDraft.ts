@@ -170,8 +170,8 @@ export function validateScenarioDraft(
   errors.iterations = integerError(
     draft.iterations,
     1,
-    10_000,
-    "Iterations must be a whole number from 1 to 10,000.",
+    1_000,
+    "Iterations must be a whole number from 1 to 1,000.",
   );
   errors.seed = integerError(
     draft.seed,
@@ -202,16 +202,19 @@ function slugify(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 72);
+    .slice(0, 66);
   return slug || "policy-experiment";
 }
 
 function shortHash(value: string) {
-  let hash = 2_166_136_261;
+  let hash = 14_695_981_039_346_656_037n;
   for (let index = 0; index < value.length; index += 1) {
-    hash = Math.imul(hash ^ value.charCodeAt(index), 16_777_619);
+    hash = BigInt.asUintN(
+      64,
+      (hash ^ BigInt(value.charCodeAt(index))) * 1_099_511_628_211n,
+    );
   }
-  return (hash >>> 0).toString(36).padStart(7, "0");
+  return hash.toString(36).padStart(13, "0");
 }
 
 export function scenarioPayload(resource: ScenarioResource): ScenarioPayload {
@@ -292,7 +295,15 @@ export function buildCandidateScenario(
   };
   const identity = JSON.stringify({
     name: draft.name.trim(),
-    baseline: baseline.scenario_id,
+    baseline: {
+      scenario_id: baseline.scenario_id,
+      company_model_version: baseline.company_model_version,
+      schema_version: baseline.schema_version,
+      horizon_days: baseline.horizon_days,
+      warmup_days: baseline.warmup_days,
+      evaluation_days: baseline.evaluation_days,
+      runoff_days: baseline.runoff_days,
+    },
     policy_levers: policyLevers,
   });
 

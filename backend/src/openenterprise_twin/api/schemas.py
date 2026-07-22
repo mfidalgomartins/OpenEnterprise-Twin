@@ -19,7 +19,7 @@ class ExperimentCreate(ApiModel):
         int,
         Field(
             gt=0,
-            le=10_000,
+            le=1_000,
             validation_alias=AliasChoices("iterations", "replications"),
         ),
     ]

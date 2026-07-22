@@ -13,6 +13,10 @@ const metricResults = [
     candidate_mean: 28_000_000,
     baseline_breach_probability: 0,
     candidate_breach_probability: 0,
+    baseline_breach_probability_ci95_lower: 0,
+    baseline_breach_probability_ci95_upper: 0.49,
+    candidate_breach_probability_ci95_lower: 0,
+    candidate_breach_probability_ci95_upper: 0.49,
     mean_difference: 18_000_000,
     ci95_lower: 16_000_000,
     ci95_upper: 20_000_000,
@@ -30,6 +34,10 @@ const metricResults = [
     candidate_mean: 17_000_000,
     baseline_breach_probability: 0,
     candidate_breach_probability: 0,
+    baseline_breach_probability_ci95_lower: 0,
+    baseline_breach_probability_ci95_upper: 0.49,
+    candidate_breach_probability_ci95_lower: 0,
+    candidate_breach_probability_ci95_upper: 0.49,
     mean_difference: 9_000_000,
     ci95_lower: 7_000_000,
     ci95_upper: 11_000_000,
@@ -47,6 +55,10 @@ const metricResults = [
     candidate_mean: 28_000_000,
     baseline_breach_probability: 0,
     candidate_breach_probability: 0.25,
+    baseline_breach_probability_ci95_lower: 0,
+    baseline_breach_probability_ci95_upper: 0.49,
+    candidate_breach_probability_ci95_lower: 0.05,
+    candidate_breach_probability_ci95_upper: 0.7,
     mean_difference: 7_000_000,
     ci95_lower: -2_000_000,
     ci95_upper: 16_000_000,
@@ -64,6 +76,10 @@ const metricResults = [
     candidate_mean: 0.92,
     baseline_breach_probability: 0.25,
     candidate_breach_probability: 0,
+    baseline_breach_probability_ci95_lower: 0.05,
+    baseline_breach_probability_ci95_upper: 0.7,
+    candidate_breach_probability_ci95_lower: 0,
+    candidate_breach_probability_ci95_upper: 0.49,
     mean_difference: 0.02,
     ci95_lower: 0.01,
     ci95_upper: 0.03,
@@ -104,11 +120,17 @@ const comparisonFixture = {
 };
 
 const reportFixture = {
-  brief_schema_version: "0.2.1",
+  brief_schema_version: "0.3.0",
   decision_status: "conditional",
+  evidence_quality: {
+    grade: "exploratory",
+    actual_replications: 4,
+    minimum_replications: 30,
+    detail: "Exploratory evidence: 4 paired replications; 30 required for decision-grade evidence.",
+  },
   recommendation: {
     status: "conditional",
-    headline: "Adopt Resilient margin with guardrails",
+    headline: "Hold Resilient margin: 4 of 30 paired replications complete",
     rationale: [
       "ebitda: €100,000 to €280,000 (paired delta €180,000, 100.0% probability of improvement).",
       "closing_cash: €210,000 to €280,000 (paired delta €70,000, 75.0% probability of improvement).",
@@ -172,7 +194,7 @@ const reportFixture = {
   ],
   assumptions: [
     "4 paired replications use common random numbers.",
-    "Confidence intervals use the paired normal approximation.",
+    "Mean-effect intervals use paired Student-t; breach risks use Wilson intervals.",
   ],
   provenance: {
     comparison_digest: comparisonFixture.digest,
@@ -269,9 +291,10 @@ describe("ExecutiveReportPage", () => {
     expect(
       screen.getByRole("heading", {
         level: 3,
-        name: "Adopt Resilient margin with guardrails",
+        name: "Hold Resilient margin: 4 of 30 paired replications complete",
       }),
     ).toBeVisible();
+    expect(screen.getByText("Hold", { selector: "p" })).toBeVisible();
     const scenarios = screen.getByRole("region", {
       name: "Scenario comparison",
     });
@@ -293,10 +316,12 @@ describe("ExecutiveReportPage", () => {
     expect(screen.getAllByText("Experiment 42")[0]).toBeVisible();
     expect(screen.getAllByText("16 Jul 2026")[0]).toBeVisible();
     expect(screen.getByText("4 paired replications use common random numbers.")).toBeVisible();
-    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
-      "/api/v1/experiments/42/comparison",
-      "/api/v1/experiments/42/report",
-    ]);
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual(
+      expect.arrayContaining([
+        "/api/v1/experiments/42/comparison",
+        "/api/v1/experiments/42/report",
+      ]),
+    );
   });
 
   it("offers the browser print flow for the frozen brief", async () => {

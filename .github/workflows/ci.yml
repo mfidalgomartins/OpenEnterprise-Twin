@@ -18,8 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -73,8 +73,8 @@ jobs:
       OPENENTERPRISE_TWIN_EXPERIMENT_WORKERS: "1"
       OPENENTERPRISE_TWIN_REPLICATION_WORKERS_PER_EXPERIMENT: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -107,7 +107,7 @@ jobs:
             fi
             sleep 1
           done
-          python -c "import json, urllib.request; payload=json.load(urllib.request.urlopen('http://127.0.0.1:8000/api/v1/scenarios/current-plan')); assert payload['company_model_version'] == '0.1.0'"
+          python -c "import json, urllib.request; payload=json.load(urllib.request.urlopen('http://127.0.0.1:8000/api/v1/scenarios/current-plan')); assert payload['company_model_version'] == '0.2.0'"
       - name: API integration tests
         working-directory: backend
         run: |
@@ -127,8 +127,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -164,7 +164,7 @@ jobs:
     timeout-minutes: 20
     needs: [backend, frontend]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Build production image
         run: |
           docker build --file backend/Dockerfile --tag openenterprise-twin-api:ci backend
@@ -198,13 +198,13 @@ jobs:
       LIVE_E2E: "1"
       VITE_API_BASE_URL: http://127.0.0.1:8000
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/pyproject.toml
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm

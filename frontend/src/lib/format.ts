@@ -9,6 +9,7 @@ export interface CurrencyFormatOptions {
 export interface PercentFormatOptions {
   locale?: string;
   maximumFractionDigits?: number;
+  signDisplay?: Intl.NumberFormatOptions["signDisplay"];
 }
 
 export interface DateFormatOptions {
@@ -39,10 +40,15 @@ export function formatCurrency(
 
 export function formatPercent(
   value: number,
-  { locale = "en-IE", maximumFractionDigits = 1 }: PercentFormatOptions = {},
+  {
+    locale = "en-IE",
+    maximumFractionDigits = 1,
+    signDisplay = "auto",
+  }: PercentFormatOptions = {},
 ) {
   return new Intl.NumberFormat(locale, {
     maximumFractionDigits,
+    signDisplay,
     style: "percent",
   }).format(value);
 }

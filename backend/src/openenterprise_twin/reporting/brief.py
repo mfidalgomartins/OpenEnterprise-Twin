@@ -30,7 +30,8 @@ from openenterprise_twin.simulation.experiment import (
 
 DecisionStatus = Literal["adopt", "conditional", "do_not_adopt"]
 _MAX_ADOPT_BREACH_PROBABILITY = 0.0
-BRIEF_SCHEMA_VERSION = "0.2.1"
+_MINIMUM_DECISION_REPLICATIONS = 30
+BRIEF_SCHEMA_VERSION = "0.3.0"
 
 
 class Recommendation(DomainModel):
@@ -38,6 +39,15 @@ class Recommendation(DomainModel):
     headline: str
     rationale: tuple[str, ...]
     evidence_metric_ids: tuple[MetricName, ...]
+
+
+class EvidenceQuality(DomainModel):
+    """Minimum evidence gate separating exploration from recorded decisions."""
+
+    grade: Literal["exploratory", "decision_grade"]
+    actual_replications: Annotated[int, Field(gt=0)]
+    minimum_replications: Annotated[int, Field(gt=0)]
+    detail: str
 
 
 class OutcomeDelta(DomainModel):
@@ -116,6 +126,7 @@ class ExecutiveBrief(DomainModel):
 
     brief_schema_version: VersionString
     decision_status: DecisionStatus
+    evidence_quality: EvidenceQuality
     recommendation: Recommendation
     outcome_deltas: tuple[OutcomeDelta, ...]
     mechanisms: tuple[MechanismNarrative, ...]
@@ -140,8 +151,14 @@ def build_executive_brief(
     started_at = perf_counter()
     validate_scenario_comparison(comparison)
     metrics = comparison.metrics
-    status = _decision_status(metrics)
-    recommendation = _recommendation(comparison, status)
+    evidence_quality = _evidence_quality(comparison)
+    constraints = _constraints(metrics)
+    status = _decision_status(
+        metrics,
+        constraints=constraints,
+        evidence_quality=evidence_quality,
+    )
+    recommendation = _recommendation(comparison, status, evidence_quality)
     outcomes = tuple(
         OutcomeDelta(
             metric_name=metric_name,
@@ -155,8 +172,7 @@ def build_executive_brief(
         )
         for metric_name in METRIC_NAMES
     )
-    constraints = _constraints(metrics)
-    governance = _governance(comparison, status)
+    governance = _governance(comparison, status, evidence_quality)
     report_duration_seconds = (
         duration_seconds
         if duration_seconds is not None
@@ -165,6 +181,7 @@ def build_executive_brief(
     brief = ExecutiveBrief(
         brief_schema_version=BRIEF_SCHEMA_VERSION,
         decision_status=status,
+        evidence_quality=evidence_quality,
         recommendation=recommendation,
         outcome_deltas=outcomes,
         mechanisms=build_mechanism_narratives(
@@ -179,6 +196,7 @@ def build_executive_brief(
             constraints=constraints,
             recommendation=recommendation,
             governance=governance,
+            evidence_quality=evidence_quality,
         ),
         assumptions=_assumptions(comparison),
         provenance=_provenance(
@@ -229,12 +247,27 @@ def validate_executive_brief(
         raise InvariantViolation(
             "brief_decision_status", "recommendation status is inconsistent"
         )
-    expected_status = _decision_status(comparison.metrics)
+    expected_quality = _evidence_quality(comparison)
+    if brief.evidence_quality != expected_quality:
+        raise InvariantViolation(
+            "brief_evidence_quality",
+            "brief evidence quality does not match the replication record",
+        )
+    expected_constraints = _constraints(comparison.metrics)
+    expected_status = _decision_status(
+        comparison.metrics,
+        constraints=expected_constraints,
+        evidence_quality=expected_quality,
+    )
     if brief.decision_status != expected_status:
         raise InvariantViolation(
             "brief_decision_status", "decision status is not supported by metrics"
         )
-    expected_recommendation = _recommendation(comparison, expected_status)
+    expected_recommendation = _recommendation(
+        comparison,
+        expected_status,
+        expected_quality,
+    )
     if brief.recommendation != expected_recommendation:
         raise InvariantViolation(
             "brief_evidence",
@@ -266,7 +299,6 @@ def validate_executive_brief(
                 "brief_outcome_reconciliation",
                 f"outcome does not reconcile for '{outcome.metric_name}'",
             )
-    expected_constraints = _constraints(comparison.metrics)
     if brief.constraints != expected_constraints:
         raise InvariantViolation(
             "brief_constraints", "brief constraints are not supported by metrics"
@@ -278,7 +310,11 @@ def validate_executive_brief(
             "brief_downside_triggers",
             "brief downside triggers are not supported by metrics",
         )
-    expected_governance = _governance(comparison, expected_status)
+    expected_governance = _governance(
+        comparison,
+        expected_status,
+        expected_quality,
+    )
     if brief.governance != expected_governance:
         raise InvariantViolation(
             "brief_governance", "brief governance is stale or unsupported"
@@ -289,6 +325,7 @@ def validate_executive_brief(
         constraints=expected_constraints,
         recommendation=expected_recommendation,
         governance=expected_governance,
+        evidence_quality=expected_quality,
     ):
         raise InvariantViolation(
             "brief_actions", "brief actions are stale or unsupported"
@@ -309,15 +346,22 @@ def brief_content_digest(brief: ExecutiveBrief) -> str:
 
 
 def _decision_status(
-    metrics: Mapping[str, MetricComparison]
+    metrics: Mapping[str, MetricComparison],
+    *,
+    constraints: tuple[DecisionConstraint, ...],
+    evidence_quality: EvidenceQuality,
 ) -> DecisionStatus:
+    if any(constraint.severity == "breach" for constraint in constraints):
+        return "do_not_adopt"
     ebitda = metrics["ebitda"]
     if (
         _is_material_downside(ebitda)
         and ebitda.probability_of_improvement < 0.40
     ):
         return "do_not_adopt"
-    if _constraints(metrics):
+    if evidence_quality.grade == "exploratory":
+        return "conditional"
+    if constraints:
         return "conditional"
     if (
         _is_material_improvement(ebitda)
@@ -329,13 +373,15 @@ def _decision_status(
 
 
 def _recommendation(
-    comparison: ScenarioComparison, status: DecisionStatus
+    comparison: ScenarioComparison,
+    status: DecisionStatus,
+    evidence_quality: EvidenceQuality,
 ) -> Recommendation:
     metrics = comparison.metrics
     evidence_ids = _evidence_metric_ids(metrics, status)
     return Recommendation(
         status=status,
-        headline=_headline(status, comparison.candidate_scenario_name),
+        headline=_headline(comparison, status, evidence_quality),
         rationale=tuple(
             _metric_evidence_clause(metric_name, metrics[metric_name])
             for metric_name in evidence_ids
@@ -421,19 +467,28 @@ def _downside_triggers(
 
 
 def _governance(
-    comparison: ScenarioComparison, status: DecisionStatus
+    comparison: ScenarioComparison,
+    status: DecisionStatus,
+    evidence_quality: EvidenceQuality,
 ) -> DecisionGovernance:
-    status_label = {
-        "adopt": "adopt",
-        "conditional": "adopt with guardrails",
-        "do_not_adopt": "do not adopt",
-    }[status]
-    return DecisionGovernance(
-        decision_owner="Managing Director",
-        decision_record_action=(
+    if evidence_quality.grade == "exploratory":
+        decision_record_action = (
+            "Hold the adoption decision until a decision-grade experiment reaches "
+            f"at least {evidence_quality.minimum_replications} paired replications."
+        )
+    else:
+        status_label = {
+            "adopt": "adopt",
+            "conditional": "adopt with guardrails",
+            "do_not_adopt": "do not adopt",
+        }[status]
+        decision_record_action = (
             f"Record the '{status_label}' recommendation and comparison digest "
             "in the decision register before implementation."
-        ),
+        )
+    return DecisionGovernance(
+        decision_owner="Managing Director",
+        decision_record_action=decision_record_action,
         review_date=(
             comparison.candidate_experiment_created_at + timedelta(days=30)
         ).date(),
@@ -447,6 +502,7 @@ def _execution_actions(
     constraints: tuple[DecisionConstraint, ...],
     recommendation: Recommendation,
     governance: DecisionGovernance,
+    evidence_quality: EvidenceQuality,
 ) -> tuple[ExecutionAction, ...]:
     reference_date = comparison.candidate_experiment_created_at.date()
     decision_label = {
@@ -454,19 +510,34 @@ def _execution_actions(
         "conditional": "conditional adoption",
         "do_not_adopt": "non-adoption",
     }[status]
-    actions = [
-        ExecutionAction(
-            action_id="record-decision",
-            title=f"Record {decision_label} decision",
-            owner=governance.decision_owner,
-            due_date=reference_date + timedelta(days=7),
-            evidence_metric_ids=recommendation.evidence_metric_ids,
-            completion_evidence=(
-                "Decision-register entry containing the recommendation, "
-                "comparison digest and named guardrails."
-            ),
-        )
-    ]
+    if evidence_quality.grade == "exploratory":
+        actions = [
+            ExecutionAction(
+                action_id="run-decision-grade-experiment",
+                title="Run decision-grade paired experiment",
+                owner=governance.decision_owner,
+                due_date=reference_date + timedelta(days=7),
+                evidence_metric_ids=recommendation.evidence_metric_ids,
+                completion_evidence=(
+                    f"A completed comparison with at least "
+                    f"{evidence_quality.minimum_replications} paired replications."
+                ),
+            )
+        ]
+    else:
+        actions = [
+            ExecutionAction(
+                action_id="record-decision",
+                title=f"Record {decision_label} decision",
+                owner=governance.decision_owner,
+                due_date=reference_date + timedelta(days=7),
+                evidence_metric_ids=recommendation.evidence_metric_ids,
+                completion_evidence=(
+                    "Decision-register entry containing the recommendation, "
+                    "comparison digest and named guardrails."
+                ),
+            )
+        ]
     for constraint in constraints:
         metric_label = constraint.metric_name.replace("_", " ")
         actions.append(
@@ -543,14 +614,23 @@ def _confidence_excludes_no_change(metric: MetricComparison) -> bool:
 
 
 def _assumptions(comparison: ScenarioComparison) -> tuple[str, ...]:
-    return (
+    assumptions = [
         (
             f"{comparison.replication_count} paired replications use common "
             "random numbers."
         ),
-        "Confidence intervals use the paired normal approximation.",
+        (
+            "Mean-effect intervals use paired Student-t; breach risks use "
+            "Wilson intervals."
+        ),
         "Narrative clauses are selected deterministically from computed states.",
-    )
+    ]
+    if comparison.replication_count < _MINIMUM_DECISION_REPLICATIONS:
+        assumptions.append(
+            f"Evidence is exploratory below {_MINIMUM_DECISION_REPLICATIONS} "
+            "paired replications and cannot authorize adoption."
+        )
+    return tuple(assumptions)
 
 
 def _provenance(
@@ -609,9 +689,66 @@ def _metric_evidence_clause(
     )
 
 
-def _headline(status: DecisionStatus, candidate_name: str) -> str:
+def _evidence_quality(comparison: ScenarioComparison) -> EvidenceQuality:
+    is_decision_grade = comparison.replication_count >= _MINIMUM_DECISION_REPLICATIONS
+    return EvidenceQuality(
+        grade="decision_grade" if is_decision_grade else "exploratory",
+        actual_replications=comparison.replication_count,
+        minimum_replications=_MINIMUM_DECISION_REPLICATIONS,
+        detail=(
+            "Replication evidence meets the minimum decision gate."
+            if is_decision_grade
+            else (
+                f"Run at least {_MINIMUM_DECISION_REPLICATIONS} paired replications "
+                "before recording an adoption decision."
+            )
+        ),
+    )
+
+
+def _headline(
+    comparison: ScenarioComparison,
+    status: DecisionStatus,
+    evidence_quality: EvidenceQuality,
+) -> str:
+    candidate_name = comparison.candidate_scenario_name
+    metrics = comparison.metrics
+    if status == "do_not_adopt":
+        hard_breaches = tuple(
+            metric
+            for metric in metrics.values()
+            if metric.candidate_breach_probability >= 0.50
+        )
+        if hard_breaches:
+            breach_metric = max(
+                hard_breaches,
+                key=lambda metric: metric.candidate_breach_probability,
+            )
+            return (
+                f"Do not adopt {candidate_name}: "
+                f"{format_metric_label(breach_metric.metric_name)} breach risk is "
+                f"{breach_metric.candidate_breach_probability:.0%}"
+            )
+        ebitda = metrics["ebitda"]
+        return (
+            f"Do not adopt {candidate_name}: EBITDA changes by "
+            f"{format_metric_value('ebitda', ebitda.mean_difference)} with "
+            f"{ebitda.probability_of_improvement:.0%} chance of improvement"
+        )
+    if evidence_quality.grade == "exploratory":
+        return (
+            f"Hold {candidate_name}: {comparison.replication_count} of "
+            f"{evidence_quality.minimum_replications} required paired replications"
+        )
+    ebitda = metrics["ebitda"]
     if status == "adopt":
-        return f"Adopt {candidate_name}"
+        return (
+            f"Adopt {candidate_name}: EBITDA changes by "
+            f"{format_metric_value('ebitda', ebitda.mean_difference)}"
+        )
     if status == "conditional":
-        return f"Adopt {candidate_name} with guardrails"
-    return f"Do not adopt {candidate_name}"
+        return (
+            f"Pilot {candidate_name}: EBITDA changes by "
+            f"{format_metric_value('ebitda', ebitda.mean_difference)} with guardrails"
+        )
+    raise AssertionError(f"unsupported decision status: {status}")

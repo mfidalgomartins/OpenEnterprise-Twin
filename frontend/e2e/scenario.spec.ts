@@ -7,7 +7,7 @@ test("keeps the model context legible at the mobile breakpoint", async ({
   await page.goto("/");
 
   const contextItems = page.locator(".model-context__item");
-  await expect(contextItems).toHaveCount(4);
+  await expect(contextItems).toHaveCount(3);
 
   const itemWidths = await contextItems.evaluateAll((items) =>
     items.map((item) => item.getBoundingClientRect().width),

@@ -214,7 +214,7 @@ def build_scenario(policy_levers: PolicyLevers) -> Scenario:
     return Scenario(
         scenario_id="balanced-policy",
         name="Balanced policy",
-        company_model_version="0.1.0",
+        company_model_version="0.2.0",
         schema_version="0.1.0",
         horizon_days=515,
         baseline_scenario_id="current-plan",

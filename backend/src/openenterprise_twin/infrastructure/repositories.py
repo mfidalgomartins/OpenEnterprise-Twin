@@ -6,7 +6,10 @@ from datetime import UTC, datetime
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from openenterprise_twin.application.ports import ExperimentDecisionRecord
+from openenterprise_twin.application.ports import (
+    CompletedCandidateRecord,
+    ExperimentDecisionRecord,
+)
 from openenterprise_twin.domain.scenario import Scenario
 from openenterprise_twin.infrastructure.models import (
     ExperimentRecord,
@@ -21,10 +24,16 @@ class ScenarioRepository:
     def get(self, scenario_id: str) -> ScenarioRecord | None:
         return self._session.get(ScenarioRecord, scenario_id)
 
-    def list(self) -> tuple[ScenarioRecord, ...]:
-        statement: Select[tuple[ScenarioRecord]] = select(ScenarioRecord).order_by(
-            ScenarioRecord.scenario_id
-        )
+    def list(
+        self,
+        *,
+        limit: int = 50,
+        after_id: str | None = None,
+    ) -> tuple[ScenarioRecord, ...]:
+        statement: Select[tuple[ScenarioRecord]] = select(ScenarioRecord)
+        if after_id is not None:
+            statement = statement.where(ScenarioRecord.scenario_id > after_id)
+        statement = statement.order_by(ScenarioRecord.scenario_id).limit(limit)
         return tuple(self._session.scalars(statement))
 
     def create(self, scenario: Scenario) -> ScenarioRecord:
@@ -252,3 +261,41 @@ class SqlAlchemyDecisionEvidenceRepository:
             if record is None:
                 raise LookupError(f"experiment '{experiment_id}' is not present")
             repository.store_brief(record, payload)
+
+    def list_completed_candidates(
+        self,
+        *,
+        limit: int,
+        before_id: int | None,
+    ) -> tuple[CompletedCandidateRecord, ...]:
+        with self._session_factory() as session:
+            statement = (
+                select(ExperimentRecord, ScenarioRecord.name)
+                .join(
+                    ScenarioRecord,
+                    ScenarioRecord.scenario_id == ExperimentRecord.scenario_id,
+                )
+                .where(
+                    ExperimentRecord.status == "completed",
+                    ExperimentRecord.baseline_experiment_id.is_not(None),
+                )
+                .order_by(ExperimentRecord.id.desc())
+                .limit(limit)
+            )
+            if before_id is not None:
+                statement = statement.where(ExperimentRecord.id < before_id)
+            rows = session.execute(statement).all()
+            records: list[CompletedCandidateRecord] = []
+            for record, scenario_name in rows:
+                if record.completed_at is None:
+                    raise RuntimeError("completed experiment is missing completed_at")
+                records.append(
+                    CompletedCandidateRecord(
+                        id=record.id,
+                        scenario_id=record.scenario_id,
+                        scenario_name=scenario_name,
+                        completed_at=record.completed_at,
+                        replication_count=record.replication_count,
+                    )
+                )
+            return tuple(records)

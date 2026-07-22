@@ -15,6 +15,7 @@ from openenterprise_twin.scenarios.comparison import (
     DEFAULT_COMPARISON_POLICY,
     ComparisonPolicy,
     MaterialityThreshold,
+    _student_t_critical_value,
     compare_experiments,
     comparison_content_digest,
     validate_scenario_comparison,
@@ -80,6 +81,9 @@ def _build_experiment(
         ReplicationMetrics(
             replication_id=replication_id,
             trace_digest=sha256(f"{scenario_id}:{replication_id}".encode()).hexdigest(),
+            shock_tape_digest=sha256(
+                f"tape:{master_seed}:{replication_id}".encode()
+            ).hexdigest(),
             metric_entries=tuple(
                 (metric_name, values[metric_name][replication_id])
                 for metric_name in METRIC_NAMES
@@ -192,17 +196,19 @@ def test_comparison_retains_exact_paired_values_and_provenance() -> None:
             assert paired.values[metric_name] == pytest.approx(expected)
 
 
-def test_paired_statistics_use_normal_ci_and_linear_percentiles() -> None:
+def test_paired_statistics_use_student_t_ci_and_linear_percentiles() -> None:
     baseline, candidate = _experiments()
 
     revenue = compare_experiments(baseline, candidate).metrics["revenue"]
 
     differences = (-5.0, 5.0, 10.0, 20.0)
-    margin = 1.959963984540054 * stdev(differences) / len(differences) ** 0.5
+    margin = 3.182446305284263 * stdev(differences) / len(differences) ** 0.5
     assert revenue.baseline_mean == pytest.approx(100.0)
     assert revenue.candidate_mean == pytest.approx(107.5)
     assert revenue.baseline_breach_probability == 0.0
     assert revenue.candidate_breach_probability == 0.0
+    assert revenue.baseline_breach_probability_ci95_upper > 0.0
+    assert revenue.candidate_breach_probability_ci95_upper > 0.0
     assert revenue.mean_difference == pytest.approx(7.5)
     assert revenue.ci95_lower == pytest.approx(7.5 - margin)
     assert revenue.ci95_upper == pytest.approx(7.5 + margin)
@@ -211,6 +217,26 @@ def test_paired_statistics_use_normal_ci_and_linear_percentiles() -> None:
     assert revenue.p95_difference == pytest.approx(18.5)
     assert revenue.probability_of_improvement == pytest.approx(0.75)
     assert revenue.direction == "higher"
+
+
+@pytest.mark.parametrize(
+    ("degrees_of_freedom", "minimum_critical_value"),
+    (
+        (31, 2.042272456),
+        (40, 2.042272456),
+        (41, 2.02107539),
+        (60, 2.02107539),
+        (61, 2.000297822),
+        (120, 2.000297822),
+        (121, 1.979930406),
+        (999, 1.979930406),
+    ),
+)
+def test_student_t_step_values_are_conservative(
+    degrees_of_freedom: int,
+    minimum_critical_value: float,
+) -> None:
+    assert _student_t_critical_value(degrees_of_freedom) >= minimum_critical_value
 
 
 def test_singleton_paired_ci_collapses_to_observed_difference() -> None:
@@ -388,6 +414,22 @@ def test_comparison_rejects_incompatible_common_random_inputs(
         compare_experiments(baseline, candidate)
 
     assert error.value.code == error_code
+
+
+def test_comparison_rejects_misaligned_shock_tapes() -> None:
+    baseline, candidate = _experiments()
+    changed = candidate.replications[0].model_copy(
+        update={"shock_tape_digest": "f" * 64}
+    )
+    candidate = _rehash(
+        candidate,
+        replications=(changed, *candidate.replications[1:]),
+    )
+
+    with pytest.raises(InvariantViolation) as error:
+        compare_experiments(baseline, candidate)
+
+    assert error.value.code == "scenario_comparison_shock_tape_alignment"
 
 
 def test_comparison_rejects_different_replication_count() -> None:

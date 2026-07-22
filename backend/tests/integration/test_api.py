@@ -6,6 +6,7 @@ from time import monotonic, sleep
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr, ValidationError
 
 from openenterprise_twin.api import app as app_module
 from openenterprise_twin.api.app import create_app
@@ -135,7 +136,7 @@ def test_create_run_compare_and_report(tmp_path: Path) -> None:
         )
         assert upgraded_response.status_code == 200
         upgraded = upgraded_response.json()
-        assert upgraded["brief_schema_version"] == "0.2.1"
+        assert upgraded["brief_schema_version"] == "0.3.0"
         assert upgraded["governance"]["decision_owner"] == "Managing Director"
         assert upgraded["actions"]
         assert upgraded["provenance"]["created_at"] == original_created_at
@@ -152,7 +153,7 @@ def test_create_run_compare_and_report(tmp_path: Path) -> None:
         )
         assert patch_upgraded_response.status_code == 200
         patch_upgraded = patch_upgraded_response.json()
-        assert patch_upgraded["brief_schema_version"] == "0.2.1"
+        assert patch_upgraded["brief_schema_version"] == "0.3.0"
         assert patch_upgraded["recommendation"]["rationale"][0].startswith(
             "EBITDA:"
         )
@@ -161,6 +162,18 @@ def test_create_run_compare_and_report(tmp_path: Path) -> None:
             f"/api/v1/experiments/{candidate_run['id']}/report"
         )
         assert repeated_response.json()["digest"] == patch_upgraded["digest"]
+
+        decisions_response = client.get("/api/v1/decisions")
+        assert decisions_response.status_code == 200
+        decisions = decisions_response.json()
+        assert [item["experiment_id"] for item in decisions["items"]] == [
+            candidate_run["id"]
+        ]
+        assert decisions["items"][0]["evidence_grade"] == "exploratory"
+
+        frontier_response = client.get("/api/v1/frontier")
+        assert frontier_response.status_code == 200
+        assert frontier_response.json()["points"] == []
 
 
 def test_api_exposes_reference_resources_and_scenario_collection(
@@ -508,3 +521,98 @@ def test_cors_allows_only_explicitly_configured_development_origin(
         "http://127.0.0.1:5173"
     )
     assert "access-control-allow-origin" not in denied.headers
+
+
+@pytest.mark.parametrize("api_key", (None, SecretStr("short-key")))
+def test_production_requires_a_strong_api_key(
+    tmp_path: Path,
+    api_key: SecretStr | None,
+) -> None:
+    with pytest.raises(ValidationError, match="api_key"):
+        Settings(
+            database_url=f"sqlite+pysqlite:///{tmp_path / 'twin.db'}",
+            artifact_directory=tmp_path / "artifacts",
+            deployment_environment="production",
+            api_key=api_key,
+        )
+
+
+def test_api_key_protects_resources_but_not_health(tmp_path: Path) -> None:
+    settings = _settings(tmp_path).model_copy(
+        update={"api_key": SecretStr("test-enterprise-key")}
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        health = client.get("/api/v1/health")
+        unauthorized = client.get("/api/v1/company")
+        authorized = client.get(
+            "/api/v1/company",
+            headers={"X-API-Key": "test-enterprise-key"},
+        )
+
+    assert health.status_code == 200
+    assert unauthorized.status_code == 401
+    assert unauthorized.json()["code"] == "authentication_required"
+    assert authorized.status_code == 200
+
+
+def test_production_disables_api_documentation_and_rejects_unknown_hosts(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        database_url=f"sqlite+pysqlite:///{tmp_path / 'twin.db'}",
+        artifact_directory=tmp_path / "artifacts",
+        deployment_environment="production",
+        api_key=SecretStr("test-enterprise-key-with-32-characters"),
+        trusted_hosts=("enterprise.example", "testserver"),
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        docs = client.get("/docs")
+        rejected_host = client.get(
+            "/api/v1/health",
+            headers={"Host": "attacker.example"},
+        )
+
+    assert docs.status_code == 404
+    assert rejected_host.status_code == 400
+
+
+def test_request_body_and_experiment_compute_budgets_are_enforced(
+    tmp_path: Path,
+) -> None:
+    body_limited = _settings(tmp_path).model_copy(
+        update={"max_request_body_bytes": 100}
+    )
+    with TestClient(create_app(body_limited)) as client:
+        oversized = client.post(
+            "/api/v1/scenarios",
+            content=b"x" * 101,
+            headers={"Content-Type": "application/json"},
+        )
+
+    compute_limited = _settings(tmp_path).model_copy(
+        update={
+            "database_url": f"sqlite+pysqlite:///{tmp_path / 'compute.db'}",
+            "artifact_directory": tmp_path / "compute-artifacts",
+            "max_experiment_periods": 2,
+        }
+    )
+    scenario = build_baseline_scenario(horizon_days=3)
+    with TestClient(create_app(compute_limited)) as client:
+        assert client.post(
+            "/api/v1/scenarios",
+            json=scenario.model_dump(mode="json"),
+        ).status_code == 201
+        over_budget = client.post(
+            f"/api/v1/scenarios/{scenario.scenario_id}/experiments",
+            json={"replications": 1, "master_seed": 9},
+        )
+
+    assert oversized.status_code == 413
+    assert oversized.json()["code"] == "request_body_too_large"
+    assert oversized.json()["trace_id"] == oversized.headers["X-Trace-ID"]
+    assert over_budget.status_code == 422
+    assert over_budget.json()["code"] == "experiment_budget_exceeded"

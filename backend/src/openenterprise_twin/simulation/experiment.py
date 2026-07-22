@@ -114,6 +114,7 @@ class ReplicationMetrics(DomainModel):
 
     replication_id: NonNegativeInt
     trace_digest: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+    shock_tape_digest: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
     metric_entries: tuple[tuple[MetricName, FiniteFloat], ...]
 
     @property
@@ -164,7 +165,7 @@ class ExperimentResult(DomainModel):
 class ExperimentArtifact(DomainModel):
     """Durable experiment envelope containing summaries and complete traces."""
 
-    schema_version: Literal["0.1.0"] = "0.1.0"
+    schema_version: Literal["0.2.0"] = "0.2.0"
     result: ExperimentResult
     traces: tuple[SimulationTrace, ...]
 
@@ -185,6 +186,10 @@ class ExperimentArtifact(DomainModel):
                 raise ValueError("artifact contains a trace with an invalid digest")
             if trace.digest != replication.trace_digest:
                 raise ValueError("artifact trace does not reconcile with its metrics")
+            if trace.shock_tape_digest != replication.shock_tape_digest:
+                raise ValueError(
+                    "artifact shock tape does not reconcile with its metrics"
+                )
             if (
                 trace.scenario_id != self.result.scenario_id
                 or trace.seed != self.result.master_seed
@@ -436,6 +441,7 @@ def _run_replication_with_trace(
         metrics=ReplicationMetrics(
             replication_id=replication_id,
             trace_digest=trace.digest,
+            shock_tape_digest=trace.shock_tape_digest,
             metric_entries=tuple((name, values[name]) for name in METRIC_NAMES),
         ),
         trace=trace,
@@ -451,15 +457,25 @@ def _trace_metric_values(trace: SimulationTrace) -> dict[MetricName, float]:
     ebitda = sum(
         period.revenue_cents
         - period.cogs_cents
+        - period.production_scrap_cost_cents
         - period.fixed_cost_cents
         - period.overtime_cost_cents
+        - period.commercial_investment_change_cents
+        - period.capacity_commitment_change_cents
         for period in evaluation
     )
     free_cash_flow = sum(
-        period.collections_cents
-        - period.supplier_payments_cents
+        period.evaluation_origin_collections_cents
+        - period.evaluation_origin_supplier_payments_cents
+        for period in trace.periods
+    ) + (
+        trace.periods[-1].closing_evaluation_receivables_cents
+        - trace.periods[-1].closing_evaluation_payables_cents
+    ) + sum(
         - period.conversion_cost_cents
         - period.overtime_cost_cents
+        - period.commercial_investment_change_cents
+        - period.capacity_commitment_change_cents
         - period.fixed_cost_cents
         - period.interest_paid_cents
         for period in evaluation

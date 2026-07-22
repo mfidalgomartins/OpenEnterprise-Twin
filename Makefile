@@ -14,6 +14,7 @@ COMPOSE ?= docker compose
 DEV_HOST ?= 127.0.0.1
 API_PORT ?= 8000
 FRONTEND_PORT ?= 5173
+E2E_API_PORT ?= 18000
 DEMO_SEED ?= 731
 DEMO_REPLICATIONS ?= 100
 DEMO_TIMEOUT_SECONDS ?= 600
@@ -120,13 +121,14 @@ e2e: install ## Run Playwright, including an isolated full-stack browser flow.
 	OPENENTERPRISE_TWIN_REPLICATION_WORKERS_PER_EXPERIMENT=1 \
 	OPENENTERPRISE_TWIN_CORS_ALLOWED_ORIGINS='["http://127.0.0.1:4173"]' \
 		$(PYTHON) -m uvicorn openenterprise_twin.api.app:create_app \
-		--factory --host 127.0.0.1 --port $(API_PORT) \
+		--factory --host 127.0.0.1 --port $(E2E_API_PORT) \
 		>"$$tmp_dir/api.log" 2>&1 & api_pid=$$!; \
 	cleanup() { kill $$api_pid 2>/dev/null || true; rm -rf "$$tmp_dir"; }; \
 	trap cleanup EXIT; \
 	for attempt in $$(seq 1 30); do \
-		if $(PYTHON) -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$(API_PORT)/health', timeout=2)" >/dev/null 2>&1; then break; fi; \
+		if ! kill -0 $$api_pid 2>/dev/null; then cat "$$tmp_dir/api.log"; exit 1; fi; \
+		if $(PYTHON) -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$(E2E_API_PORT)/health', timeout=2)" >/dev/null 2>&1; then break; fi; \
 		if [ "$$attempt" = 30 ]; then cat "$$tmp_dir/api.log"; exit 1; fi; \
 		sleep 1; \
 	done; \
-	cd frontend && LIVE_E2E=1 VITE_API_BASE_URL='http://127.0.0.1:$(API_PORT)' npm run e2e
+	cd frontend && LIVE_E2E=1 VITE_API_BASE_URL='http://127.0.0.1:$(E2E_API_PORT)' npm run e2e

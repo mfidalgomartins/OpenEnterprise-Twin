@@ -23,5 +23,8 @@ export function useScenarioDecisionRoom(experimentId: string) {
     isFetching: comparisonQuery.isFetching || reportQuery.isFetching,
     isPending: comparisonQuery.isPending || reportQuery.isPending,
     report: reportQuery.data,
+    retry: () => {
+      void Promise.all([comparisonQuery.refetch(), reportQuery.refetch()]);
+    },
   };
 }

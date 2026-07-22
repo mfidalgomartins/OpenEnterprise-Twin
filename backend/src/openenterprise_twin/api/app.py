@@ -6,10 +6,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from sqlalchemy.engine import make_url
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from openenterprise_twin.api.dependencies import AppServices
 from openenterprise_twin.api.errors import install_error_handlers
-from openenterprise_twin.api.routes import router
+from openenterprise_twin.api.middleware import RequestBodyLimitMiddleware
+from openenterprise_twin.api.routes import public_router, router
 from openenterprise_twin.infrastructure.artifacts import FileArtifactStore
 from openenterprise_twin.infrastructure.database import (
     create_database_engine,
@@ -53,10 +55,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             engine.dispose()
 
+    expose_docs = resolved_settings.deployment_environment != "production"
     app = FastAPI(
         title="OpenEnterprise Twin API",
-        version="0.1.0",
+        version="0.2.0",
         lifespan=lifespan,
+        docs_url="/docs" if expose_docs else None,
+        redoc_url="/redoc" if expose_docs else None,
+        openapi_url="/openapi.json" if expose_docs else None,
+    )
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_body_bytes=resolved_settings.max_request_body_bytes,
+    )
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=list(resolved_settings.trusted_hosts),
     )
     if resolved_settings.cors_allowed_origins:
         app.add_middleware(
@@ -67,7 +81,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ],
             allow_credentials=False,
             allow_methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["Accept", "Content-Type", "Idempotency-Key"],
+            allow_headers=[
+                "Accept",
+                "Content-Type",
+                "Idempotency-Key",
+                "X-API-Key",
+            ],
             expose_headers=["Location", "X-Trace-ID"],
         )
     app.state.services = AppServices(
@@ -77,12 +96,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             session_factory
         ),
         experiment_runner=runner,
+        max_experiment_periods=resolved_settings.max_experiment_periods,
     )
+    app.state.settings = resolved_settings
     install_error_handlers(app)
+    app.include_router(public_router)
     app.include_router(router)
-
-    @app.get("/health", include_in_schema=False)
-    def health() -> dict[str, str]:
-        return {"status": "ok"}
 
     return app

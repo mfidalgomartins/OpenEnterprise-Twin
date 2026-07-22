@@ -175,6 +175,18 @@ def validate_scenario_against_company(
             Decimal("1") + price_change.price_change
         ) <= 0:
             raise DomainValidationError("price change must preserve a positive price")
+    commercial_change = scenario.policy_levers.commercial_investment_change
+    for product in company.products:
+        for profile in product.demand_profiles:
+            if (
+                Decimal("1")
+                + commercial_change * profile.commercial_investment_sensitivity
+                <= 0
+            ):
+                raise DomainValidationError(
+                    "commercial multiplier must remain positive for every "
+                    "demand profile"
+                )
     for resource_change in scenario.policy_levers.resource_changes:
         _assert_known(resource_change.resource_id, resources, "unknown resource")
         resource = resources[resource_change.resource_id]

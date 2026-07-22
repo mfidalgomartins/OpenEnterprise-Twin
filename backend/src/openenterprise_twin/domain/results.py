@@ -54,9 +54,16 @@ class PeriodResult(DomainModel):
     overtime_used_minutes: dict[str, NonNegativeInt]
     opening_cash_cents: NonNegativeInt
     collections_cents: NonNegativeInt
+    evaluation_origin_collections_cents: NonNegativeInt
     supplier_payments_cents: NonNegativeInt
+    evaluation_origin_supplier_payments_cents: NonNegativeInt
+    closing_evaluation_receivables_cents: NonNegativeInt
+    closing_evaluation_payables_cents: NonNegativeInt
     conversion_cost_cents: NonNegativeInt
     overtime_cost_cents: NonNegativeInt
+    commercial_investment_change_cents: int
+    capacity_commitment_change_cents: int
+    production_scrap_cost_cents: NonNegativeInt
     fixed_cost_cents: NonNegativeInt
     interest_paid_cents: NonNegativeInt
     capital_investment_cents: NonNegativeInt

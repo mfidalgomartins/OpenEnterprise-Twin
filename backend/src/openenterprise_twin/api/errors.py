@@ -48,6 +48,16 @@ def install_error_handlers(app: FastAPI) -> None:
         )
         response = await call_next(request)
         response.headers["X-Trace-ID"] = request.state.trace_id
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            principal = getattr(request.state, "principal", None)
+            _LOGGER.info(
+                "audit_event method=%s path=%s status=%s subject=%s trace_id=%s",
+                request.method,
+                request.url.path,
+                response.status_code,
+                getattr(principal, "subject", "unauthenticated"),
+                request.state.trace_id,
+            )
         return response
 
     @app.exception_handler(ApiProblemError)

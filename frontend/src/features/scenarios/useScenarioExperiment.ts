@@ -5,6 +5,7 @@ import {
   createExperiment,
   createScenario,
   getExperiment,
+  getScenario,
 } from "./api";
 import { scenarioPayload } from "./scenarioDraft";
 import type {
@@ -61,14 +62,44 @@ function delay(milliseconds: number) {
   });
 }
 
+function immutableScenarioConflict(): RunIssue {
+  return {
+    code: "scenario_conflict",
+    detail:
+      "The immutable scenario identifier is already bound to different inputs.",
+    correctiveAction: correctiveActions.scenario_conflict,
+  };
+}
+
+function scenarioMatches(
+  existing: ScenarioResource,
+  expected: ScenarioPayload,
+) {
+  return JSON.stringify(scenarioPayload(existing)) === JSON.stringify(expected);
+}
+
 async function ensureScenario(scenario: ScenarioPayload) {
+  try {
+    const existing = await getScenario(scenario.scenario_id);
+    if (!scenarioMatches(existing, scenario)) {
+      throw immutableScenarioConflict();
+    }
+    return;
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.code !== "scenario_not_found") {
+      throw error;
+    }
+  }
   try {
     await createScenario(scenario);
   } catch (error) {
-    if (error instanceof ApiError && error.code === "scenario_conflict") {
-      return;
+    if (!(error instanceof ApiError) || error.code !== "scenario_conflict") {
+      throw error;
     }
-    throw error;
+    const existing = await getScenario(scenario.scenario_id);
+    if (!scenarioMatches(existing, scenario)) {
+      throw immutableScenarioConflict();
+    }
   }
 }
 

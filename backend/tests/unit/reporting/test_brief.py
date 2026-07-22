@@ -4,6 +4,7 @@ from typing import cast
 
 import pytest
 
+from openenterprise_twin.cli.demo import build_flagship_scenario
 from openenterprise_twin.domain.errors import InvariantViolation
 from openenterprise_twin.domain.scenario import (
     PolicyLevers,
@@ -29,7 +30,9 @@ from openenterprise_twin.simulation.reference import (
 )
 
 
-def _comparison(*, liquidity_stress: bool = False) -> ScenarioComparison:
+def _comparison(
+    *, liquidity_stress: bool = False, replications: int = 8
+) -> ScenarioComparison:
     company = build_northstar_company()
     baseline_scenario = build_baseline_scenario(horizon_days=30)
     if liquidity_stress:
@@ -61,7 +64,7 @@ def _comparison(*, liquidity_stress: bool = False) -> ScenarioComparison:
             company=company,
             scenario=baseline_scenario,
             master_seed=20260716,
-            replications=8,
+            replications=replications,
             max_workers=1,
         )
     )
@@ -70,7 +73,7 @@ def _comparison(*, liquidity_stress: bool = False) -> ScenarioComparison:
             company=company,
             scenario=candidate_scenario,
             master_seed=20260716,
-            replications=8,
+            replications=replications,
             max_workers=1,
         )
     )
@@ -144,6 +147,12 @@ def test_recommendation_cites_only_computed_metric_evidence() -> None:
     assert len(brief.provenance.candidate_resolved_assumptions_hash) == 64
     assert brief.provenance.created_at.tzinfo is not None
     assert brief.provenance.duration_seconds >= 0
+    assert brief.evidence_quality.grade == "exploratory"
+    assert brief.evidence_quality.minimum_replications == 30
+    assert brief.evidence_quality.actual_replications == comparison.replication_count
+    assert brief.recommendation.headline.startswith("Hold ")
+    assert "decision-grade" in brief.governance.decision_record_action
+    assert brief.actions[0].action_id == "run-decision-grade-experiment"
     assert brief.digest == brief_content_digest(brief)
 
 
@@ -152,7 +161,7 @@ def test_executive_narrative_uses_display_labels_not_metric_identifiers() -> Non
 
     brief = build_executive_brief(comparison)
 
-    assert brief.brief_schema_version == "0.2.1"
+    assert brief.brief_schema_version == "0.3.0"
     assert brief.recommendation.rationale[0].startswith("EBITDA:")
     assert format_metric_value("ebitda", -12_300) == "-€123"
     assert brief.constraints
@@ -173,9 +182,9 @@ def test_brief_freezes_decision_governance_and_evidence_linked_actions() -> None
     assert brief.governance.review_date == (
         comparison.candidate_experiment_created_at + timedelta(days=30)
     ).date()
-    assert "comparison digest" in brief.governance.decision_record_action.lower()
+    assert "decision-grade" in brief.governance.decision_record_action.lower()
     assert brief.actions
-    assert brief.actions[0].action_id == "record-decision"
+    assert brief.actions[0].action_id == "run-decision-grade-experiment"
     assert all(action.owner for action in brief.actions)
     assert all(
         action.due_date <= brief.governance.review_date for action in brief.actions
@@ -195,6 +204,48 @@ def test_brief_freezes_decision_governance_and_evidence_linked_actions() -> None
     assert constrained_metrics <= action_metrics
 
 
+def test_decision_grade_evidence_enables_a_recorded_decision() -> None:
+    comparison = _comparison(replications=30)
+
+    brief = build_executive_brief(comparison)
+
+    assert brief.evidence_quality.grade == "decision_grade"
+    assert brief.evidence_quality.actual_replications == 30
+    assert "comparison digest" in brief.governance.decision_record_action.lower()
+    assert brief.actions[0].action_id == "record-decision"
+
+
+def test_do_not_adopt_headline_names_material_downside_without_hard_breach() -> None:
+    company = build_northstar_company()
+    baseline_scenario = build_baseline_scenario(horizon_days=60)
+    candidate_scenario = build_flagship_scenario(horizon_days=60)
+    baseline = run_experiment(
+        ExperimentRequest(
+            company=company,
+            scenario=baseline_scenario,
+            master_seed=731,
+            replications=30,
+            max_workers=1,
+        )
+    )
+    candidate = run_experiment(
+        ExperimentRequest(
+            company=company,
+            scenario=candidate_scenario,
+            master_seed=731,
+            replications=30,
+            max_workers=1,
+        )
+    )
+
+    brief = build_executive_brief(compare_experiments(baseline, candidate))
+
+    assert brief.decision_status == "do_not_adopt"
+    assert not any(item.severity == "breach" for item in brief.constraints)
+    assert "EBITDA changes by" in brief.recommendation.headline
+    assert "breach risk" not in brief.recommendation.headline
+
+
 def test_brief_explains_only_policy_levers_present_in_candidate() -> None:
     comparison = _comparison()
     brief = build_executive_brief(comparison)
@@ -209,7 +260,7 @@ def test_liquidity_breach_prevents_unqualified_recommendation() -> None:
 
     brief = build_executive_brief(comparison)
 
-    assert brief.decision_status == "conditional"
+    assert brief.decision_status == "do_not_adopt"
     assert "closing_cash" in brief.recommendation.evidence_metric_ids
     assert "rescue_funding" in brief.recommendation.evidence_metric_ids
     assert any(
@@ -229,7 +280,7 @@ def test_worse_rescue_mean_is_visible_when_breach_probabilities_are_saturated() 
     assert rescue.baseline_breach_probability == 1.0
     assert rescue.candidate_breach_probability == 1.0
     assert rescue.mean_difference > rescue.materiality_threshold
-    assert brief.decision_status == "conditional"
+    assert brief.decision_status == "do_not_adopt"
     assert any(
         constraint.metric_name == "rescue_funding"
         for constraint in brief.constraints
@@ -249,7 +300,7 @@ def test_persistent_absolute_breach_remains_an_explicit_constraint() -> None:
 
     assert comparison.metrics["closing_cash"].baseline_breach_probability == 1.0
     assert comparison.metrics["closing_cash"].candidate_breach_probability == 1.0
-    assert brief.decision_status == "conditional"
+    assert brief.decision_status == "do_not_adopt"
     assert {"closing_cash", "rescue_funding"} <= constrained_metrics
 
 

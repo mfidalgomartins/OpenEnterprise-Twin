@@ -2,7 +2,7 @@
 
 # OpenEnterprise Twin
 
-**Evidence-linked Monte Carlo decision twin for commercial, operational and liquidity policies.**
+**A governed Monte Carlo decision twin for commercial, operational and liquidity policy.**
 
 [![CI](https://github.com/mfidalgomartins/OpenEnterprise-Twin/actions/workflows/ci.yml/badge.svg)](https://github.com/mfidalgomartins/OpenEnterprise-Twin/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](backend/pyproject.toml)
@@ -10,42 +10,60 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)](docker-compose.yml)
 [![License](https://img.shields.io/badge/License-Apache--2.0-2E7D32)](LICENSE)
 
-[Run the flagship demo](#five-minute-demo) · [Explore architecture](docs/architecture.md) · [Read the model](docs/model.md) · [Contribute](docs/contributing.md)
+[Run the flagship demo](#run-it-locally) · [Inspect the decision model](docs/model.md) · [Explore the architecture](docs/architecture.md) · [Read the threat model](docs/OpenEnterprise-Twin-threat-model.md)
 
 </div>
 
-> **Policy → paired simulation → evidence-linked recommendation → immutable executive brief.**
+> **Policy → paired simulation → evidence gate → Pareto frontier → immutable executive brief.**
 
-## Product thesis
+![OpenEnterprise Twin control tower](docs/assets/decision-room.png)
 
-OpenEnterprise Twin treats a company as one connected operating system, not a collection of dashboards. Change a commercial, capacity, supply or working-capital policy; run the same company through baseline and candidate conditions; then inspect the distribution of value, service and liquidity outcomes together.
+## The product
 
-The 0.1 reference company, **Northstar Components**, is a synthetic mid-market B2B manufacturer. Its Decision Room produces an evidence-linked recommendation with explicit trade-offs, downside triggers and a complete reproducibility record. It is a decision simulator, not a forecast oracle: every conclusion is conditional on the model and assumptions shown with it.
+OpenEnterprise Twin models a company as one connected operating and financial system. A policy can change pricing, commercial investment, finite capacity, sourcing, safety stock, payment terms or capital deployment. The twin then runs baseline and candidate against the same stochastic shock tapes and evaluates value, service and liquidity together.
 
-## Decision Room visual
+The result is not another KPI dashboard. It is a governed decision workspace with:
 
-![OpenEnterprise Twin Decision Room concept](docs/assets/decision-room-concept.png)
+- an explicit `adopt`, `pilot only` or `do not adopt` recommendation;
+- a 30-paired-run evidence gate that prevents exploratory output from authorizing adoption;
+- Student-t intervals for paired effects and Wilson intervals for breach risk;
+- hard-constraint precedence for liquidity and operational guardrails;
+- a multi-objective Pareto frontier across EBITDA, free cash flow and OTIF;
+- named owners, review dates, actions and content-addressed evidence digests;
+- an eight-chapter, print-safe executive decision brief.
 
-The interface is an interactive executive brief: conclusion first, uncertainty in view, operating mechanism beneath it and provenance at the point of decision. The accepted concept is the visual source of truth for the scenario comparison experience.
+Northstar Components is the included synthetic B2B manufacturing reference model. It exists to make the whole system executable without implying that its parameters are calibrated to a real company.
 
-## Five-minute demo
+## Why it is unusual
+
+| Typical analytics product | OpenEnterprise Twin |
+| --- | --- |
+| Reports correlated KPIs | Simulates one reconciled operational-financial ledger |
+| Compares independent averages | Uses paired common-random-number experiments |
+| Hides sample quality | Enforces and displays an evidence gate |
+| Optimizes one objective | Exposes feasible non-dominated policies |
+| Generates a recommendation | Proves every recommendation against typed evidence |
+| Treats provenance as metadata | Makes provenance part of the immutable result |
+
+## Run it locally
 
 Prerequisites: Docker with Compose, Python 3.12, Node.js 22+ and Make.
 
 ```bash
 cp .env.example .env
+# Replace the example PostgreSQL password in both values in .env.
 make dev
 ```
 
-`make dev` creates the local Python environment, installs locked frontend packages, starts PostgreSQL 16, applies Alembic migrations, seeds the Northstar baseline, and serves the API and frontend. Keep it running, then use a second terminal:
+In a second terminal:
 
 ```bash
 make demo
 ```
 
-The demo creates the **Service resilience plan**, runs baseline and candidate with common random numbers, materializes the comparison and executive brief, and prints the Decision Room route plus seed, replication count, model versions, resolved-assumption hashes and evidence digests. Defaults are `DEMO_SEED=731` and `DEMO_REPLICATIONS=100`; override either through `.env` or the command line.
+The demo seeds Northstar, creates the **Service resilience plan**, executes a paired baseline/candidate experiment and prints a Decision Room URL with the seed, model versions, assumption hashes and evidence digests.
 
-Useful checks:
+Release gates:
 
 ```bash
 make lint
@@ -55,70 +73,76 @@ make e2e
 make docker-build
 ```
 
-## Why it is different
-
-- **Decisions before metrics.** The output is a policy recommendation, mechanism and guardrail set—not a KPI wall.
-- **One operational-financial ledger.** Demand, backlog, production, material, service, receivables, payables, debt and cash move in one daily transition.
-- **Uncertainty is structural.** Every reported metric includes distributions and breach probabilities; comparisons use paired replications rather than independent averages.
-- **Reproducibility is part of the result.** Company version, scenario schema, engine, stochastic tape, plugins, seed, replication count, assumptions and content digests travel with the evidence.
-- **Publication is immutable.** Every Decision Room opens a versioned, eight-chapter executive brief with named actions and a print-safe A4 PDF path.
-- **Extension without infrastructure leakage.** Typed plugin contracts accept immutable domain values and never receive FastAPI or SQLAlchemy objects.
-
-## Architecture
+## Architecture at a glance
 
 ```mermaid
 flowchart LR
-    UI["React Decision Room"] -->|"typed /api/v1 HTTP"| API["FastAPI transport"]
-    API --> APP["Experiment and decision services"]
-    APP --> CORE["Domain, simulation, comparison and reporting"]
+    UI["React control tower"] -->|"same-origin /api/v1"| EDGE["Nginx security edge"]
+    EDGE --> API["FastAPI transport"]
+    API --> APP["Experiment + decision services"]
+    APP --> CORE["Deterministic simulation kernel"]
     APP --> DB[("PostgreSQL 16")]
-    APP --> ART["Content-addressed gzip JSON artifacts"]
+    APP --> ART["Content-addressed artifacts"]
+    CORE --> BRIEF["Comparison + governed brief"]
 ```
 
-The backend is a modular Python monolith: immutable domain models and the simulation kernel are infrastructure-free; application services own experiment lifecycle and decision assembly; infrastructure implements PostgreSQL and artifact persistence; FastAPI exposes versioned resources. Experiments run in a bounded in-process executor whose interface can later be replaced by a queue without changing HTTP contracts.
+The Python backend is a modular monolith. Import contracts keep the domain, simulation and plugin SDK independent of delivery infrastructure. A bounded runner owns asynchronous experiment lifecycle; PostgreSQL stores lifecycle and compact evidence; detailed traces are canonical gzip JSON artifacts.
 
-See [architecture.md](docs/architecture.md) for module boundaries, runtime flow, persistence and deployment details.
+[Architecture and API contracts →](docs/architecture.md)
 
 ## Model credibility
 
-- Daily integer-ledger simulation from a fixed start date, with a 91-day warm-up, 364-day evaluation and 60-day runoff in the standard run.
-- Counter-keyed NumPy Philox draws built outside business transitions; no global random state.
-- Common random numbers align baseline and candidate by seed, replication, process, day, entity and draw identifier.
-- Every period validates finished-goods, work-in-progress, material and backlog conservation; capacity bounds; order outcomes; and cash and debt reconciliation to the cent.
-- Experiment summaries retain replication-level values and reconcile every distribution back to them.
-- Executive prose is deterministic and can cite only computed metric evidence.
+- Daily integer-cent/minute/unit ledger with warm-up, evaluation and runoff cohorts.
+- Demand, backlog, finite-capacity production, materials, scrap, receivables, payables, debt and cash evolve in one transition.
+- Explicit economic cost for commercial investment, committed capacity, supplier terms and production scrap.
+- Evaluation-origin cash flows continue through runoff; residual receivables and payables are included in free cash flow.
+- Counter-keyed NumPy Philox shock tapes are stable by seed, replication, process, day, entity and draw ID.
+- Physical and accounting invariants reconcile every period; artifact, tape, comparison and brief digests are validated on read.
 
-The equations, units, stochastic distributions, metric semantics and invariant codes are documented in [model.md](docs/model.md).
+[Equations, units, assumptions and invariants →](docs/model.md)
 
-## Extension model
+## Security posture
 
-The plugin SDK defines six typed capability protocols: `DemandModel`, `OperationsModel`, `FinanceModel`, `RiskMetric`, `OptimizationStrategy` and `ReportSection`. Each plugin declares a semantic version, inclusive engine compatibility range, configuration schema and unique capability IDs. The registry rejects incompatible versions, duplicate IDs and implementations that do not satisfy the declared typed contract.
+Production mode requires an API key, disables interactive API documentation, validates host headers, limits request bodies and caps simulation work. The supplied Nginx edge keeps the key server-side, applies a strict content security policy and proxies browser requests same-origin. PostgreSQL binds to loopback in the local Compose profile and requires an operator-supplied password.
 
-Registration is explicit and in-process in 0.1. Python entry-point discovery and stronger third-party isolation are roadmap items; plugins are not arbitrary code uploaded through the API.
+This is a single-tenant reference release, not a multi-tenant identity platform. OIDC/RBAC, distributed workers and an object-store artifact adapter remain deployment extensions.
 
-## Roadmap
+[Trust boundaries, abuse cases and mitigations →](docs/OpenEnterprise-Twin-threat-model.md)
 
-**0.2 — Optimization Workbench:** bounded candidate screening, risk-adjusted optimization, sensitivity and driver decomposition, and entry-point plugin discovery.
+## Repository map
 
-**0.3 — Enterprise Extension:** OR-Tools sourcing/capacity adapter, durable workers, OIDC and roles, S3-compatible artifacts, company-model import diagnostics and scenario approvals.
+```text
+backend/
+  src/openenterprise_twin/
+    domain/          immutable company, scenario and result contracts
+    simulation/      shock tapes, daily engine, metrics and invariants
+    scenarios/       paired comparison and materiality policy
+    reporting/       evidence-linked recommendation and executive brief
+    application/     experiment lifecycle and decision portfolio services
+    infrastructure/  SQLAlchemy, artifacts, settings and bounded runner
+    api/             FastAPI resources, security and problem details
+frontend/
+  src/features/
+    control/         briefing, twin, portfolio, frontier and brief register
+    scenarios/       policy studio and decision room
+    reports/         immutable executive brief
+docs/                architecture, model, design, security and contribution guides
+```
 
-**1.0 — Trusted Decision Platform:** stable plugin SDK, calibration and backtesting workbenches, portfolio allocation, event-driven state updates, benchmark datasets and a long-term support policy.
+## Current boundaries
 
-## Limitations
-
-- Northstar is synthetic and its stochastic parameters are engineering assumptions, not estimates calibrated to a real company.
-- Results are conditional simulations and do not establish causal effects or guarantee future outcomes.
-- The 0.1 runtime has no ERP/CRM connectors, multi-tenancy, authentication, billing or real-time ingestion.
-- Experiment execution is in-process and intended for bounded local or single-instance workloads.
-- PostgreSQL is the production relational store; SQLite exists only as an isolated test adapter.
-- Full traces use local filesystem artifacts; distributed deployments need a shared artifact-store adapter.
-- Python dependencies currently use bounded ranges rather than a committed backend lockfile. Frontend CI uses `npm ci` and `package-lock.json`.
-- The frontend container expects a same-network API upstream and defaults to `http://api:8000`; override `API_UPSTREAM` when deploying under a different service name.
+- The reference parameters are engineering assumptions, not causal estimates or forecasts.
+- Execution is bounded and in-process; horizontal failover needs a durable queue adapter.
+- Filesystem artifacts are single-node unless backed by shared durable storage.
+- API-key authentication is suitable for a controlled single-tenant deployment; enterprise identity needs OIDC and roles.
+- PostgreSQL is the supported non-test relational store; SQLite is only an isolated test/demo adapter.
 
 ## Contributing
 
-Start with [contributing.md](docs/contributing.md). Changes must preserve deterministic replay, module boundaries and ledger invariants; model changes require tests and a version decision. Run `make lint`, `make test` and `make build` before opening a pull request. Do not commit generated wheels, frontend bundles, simulation artifacts, test reports, caches or local environment files.
+Focused contributions are welcome. Model changes must state equations, units, rounding, stochastic keys and version impact, and must preserve deterministic replay and ledger invariants.
 
-## Licence
+[Contribution workflow →](docs/contributing.md) · [Design system →](docs/design-system.md)
 
-Licensed under the [Apache License 2.0](LICENSE).
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).

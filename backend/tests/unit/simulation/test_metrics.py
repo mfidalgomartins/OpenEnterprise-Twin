@@ -39,6 +39,8 @@ def test_breach_probability_is_strict_and_excludes_guardrail_equality(
     )
 
     assert result.breach_probability == pytest.approx(1 / 3)
+    assert result.breach_probability_ci95_lower == pytest.approx(0.0614919447)
+    assert result.breach_probability_ci95_upper == pytest.approx(0.7923403992)
 
 
 @pytest.mark.parametrize(
@@ -75,6 +77,8 @@ def test_singleton_distribution_has_identical_quantiles_and_zero_dispersion() ->
         p95=7.5,
         standard_deviation=0.0,
         breach_probability=0.0,
+        breach_probability_ci95_lower=0.0,
+        breach_probability_ci95_upper=0.7934506856227626,
         cvar95=7.5,
     )
 

@@ -4,12 +4,16 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 
 import { ScenarioBuilder } from "../src/features/scenarios/ScenarioBuilder";
+import {
+  buildCandidateScenario,
+  defaultScenarioDraft,
+} from "../src/features/scenarios/scenarioDraft";
 
 const baseline = {
   id: "current-plan",
   scenario_id: "current-plan",
   name: "Current plan",
-  company_model_version: "0.1.0",
+  company_model_version: "0.2.0",
   schema_version: "0.1.0",
   horizon_days: 515,
   warmup_days: 91,
@@ -29,7 +33,7 @@ const baseline = {
 const company = {
   company_id: "northstar-components",
   name: "Northstar Components",
-  model_version: "0.1.0",
+  model_version: "0.2.0",
   products: [
     {
       product_id: "intelligent-valve",
@@ -103,7 +107,6 @@ function referenceFetch() {
 }
 
 function successfulExperimentFetch() {
-  let scenarioPosts = 0;
   let experimentPosts = 0;
 
   return vi.fn<typeof fetch>((input, init) => {
@@ -115,17 +118,16 @@ function successfulExperimentFetch() {
     if (method === "GET" && path.endsWith("/api/v1/company")) {
       return Promise.resolve(jsonResponse(company));
     }
-    if (method === "POST" && path.endsWith("/api/v1/scenarios")) {
-      scenarioPosts += 1;
+    if (method === "GET" && path.endsWith("/api/v1/scenarios/current-plan")) {
+      return Promise.resolve(jsonResponse(baseline));
+    }
+    if (method === "GET" && path.includes("/api/v1/scenarios/")) {
       return Promise.resolve(
-        scenarioPosts === 1
-          ? problemResponse(
-              "scenario_conflict",
-              "Current plan already exists.",
-              409,
-            )
-          : jsonResponse({ id: "candidate" }, 201),
+        problemResponse("scenario_not_found", "Scenario not found.", 404),
       );
+    }
+    if (method === "POST" && path.endsWith("/api/v1/scenarios")) {
+      return Promise.resolve(jsonResponse({ id: "candidate" }, 201));
     }
     if (method === "POST" && path.includes("/experiments")) {
       experimentPosts += 1;
@@ -172,12 +174,25 @@ function renderBuilder() {
 }
 
 afterEach(() => {
-  localStorage.clear();
+  sessionStorage.clear();
   vi.unstubAllGlobals();
 });
 
 describe("ScenarioBuilder", () => {
-  it("enforces the price, capacity, and safety-stock boundaries", async () => {
+  it("versions immutable scenario identity with the baseline model", () => {
+    const versionedBaseline = {
+      ...baseline,
+      company_model_version: "0.3.0",
+    };
+
+    expect(
+      buildCandidateScenario(defaultScenarioDraft, baseline).scenario_id,
+    ).not.toBe(
+      buildCandidateScenario(defaultScenarioDraft, versionedBaseline).scenario_id,
+    );
+  });
+
+  it("enforces policy and compute-budget boundaries", async () => {
     vi.stubGlobal("fetch", referenceFetch());
     const user = userEvent.setup();
     renderBuilder();
@@ -187,6 +202,7 @@ describe("ScenarioBuilder", () => {
     );
     const capacity = screen.getByLabelText("Test capacity change");
     const safetyStock = screen.getByLabelText("Electronics safety stock");
+    const iterations = screen.getByLabelText("Paired iterations");
 
     await user.clear(price);
     await user.type(price, "-100");
@@ -194,6 +210,8 @@ describe("ScenarioBuilder", () => {
     await user.type(capacity, "1001");
     await user.clear(safetyStock);
     await user.type(safetyStock, "366");
+    await user.clear(iterations);
+    await user.type(iterations, "1001");
 
     expect(
       screen.getByText(
@@ -207,6 +225,9 @@ describe("ScenarioBuilder", () => {
     ).toBeVisible();
     expect(
       screen.getByText("Safety stock must be between 0 and 365 days."),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Iterations must be a whole number from 1 to 1,000."),
     ).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Run comparison" }),
@@ -266,11 +287,13 @@ describe("ScenarioBuilder", () => {
         String(input).endsWith("/api/v1/scenarios") &&
         init?.method === "POST",
     );
-    expect(scenarioCalls).toHaveLength(2);
-    const candidatePayload = JSON.parse(String(scenarioCalls[1]?.[1]?.body));
+    expect(scenarioCalls).toHaveLength(1);
+    const candidatePayload = JSON.parse(String(scenarioCalls[0]?.[1]?.body));
+    expect(candidatePayload.scenario_id).toMatch(/-[0-9a-z]{13}$/);
+    expect(candidatePayload.scenario_id.length).toBeLessThanOrEqual(80);
     expect(candidatePayload).toMatchObject({
       baseline_scenario_id: "current-plan",
-      company_model_version: "0.1.0",
+      company_model_version: "0.2.0",
       policy_levers: {
         price_changes: [
           {
@@ -350,20 +373,16 @@ describe("ScenarioBuilder", () => {
 
   it("preserves inputs and shows a stable API code with corrective action", async () => {
     const fetchMock = successfulExperimentFetch();
-    let scenarioPosts = 0;
     fetchMock.mockImplementation((input, init) => {
       const path = String(input);
       if (init?.method === "POST" && path.endsWith("/api/v1/scenarios")) {
-        scenarioPosts += 1;
-        if (scenarioPosts === 2) {
-          return Promise.resolve(
-            problemResponse(
-              "scenario_incompatible",
-              "The selected lever is outside the company model.",
-              422,
-            ),
-          );
-        }
+        return Promise.resolve(
+          problemResponse(
+            "scenario_incompatible",
+            "The selected lever is outside the company model.",
+            422,
+          ),
+        );
       }
       return successfulExperimentFetch()(input, init);
     });
@@ -385,5 +404,49 @@ describe("ScenarioBuilder", () => {
       screen.getByText("Review the highlighted lever limits and try again."),
     ).toBeVisible();
     expect(price).toHaveValue(4);
+  });
+
+  it("refuses to run when an immutable scenario id resolves to other inputs", async () => {
+    const fallbackFetch = successfulExperimentFetch();
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      const path = String(input);
+      const method = init?.method ?? "GET";
+      if (
+        method === "GET" &&
+        path.includes("/api/v1/scenarios/") &&
+        !path.endsWith("/api/v1/scenarios/current-plan")
+      ) {
+        const scenarioId = decodeURIComponent(path.split("/").at(-1) ?? "");
+        return Promise.resolve(
+          jsonResponse({
+            ...baseline,
+            id: scenarioId,
+            scenario_id: scenarioId,
+            name: "Conflicting stored scenario",
+            baseline_scenario_id: "current-plan",
+          }),
+        );
+      }
+      return fallbackFetch(input, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderBuilder();
+
+    const price = await screen.findByLabelText(
+      "Spot intelligent valve price change",
+    );
+    await user.clear(price);
+    await user.type(price, "4");
+    await user.click(screen.getByRole("button", { name: "Run comparison" }));
+
+    expect(
+      await screen.findByText("Error code: scenario_conflict"),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "Change a driver or scenario name to create a distinct immutable revision.",
+      ),
+    ).toBeVisible();
   });
 });

@@ -14,6 +14,8 @@ from pydantic import ConfigDict, Field
 
 from openenterprise_twin.domain.company import DomainModel
 
+_NORMAL_95_CRITICAL_VALUE = 1.959963984540054
+
 
 class MetricDistribution(DomainModel):
     """Immutable summary statistics for one simulated metric."""
@@ -33,6 +35,8 @@ class MetricDistribution(DomainModel):
     p95: float
     standard_deviation: Annotated[float, Field(ge=0.0)]
     breach_probability: Annotated[float, Field(ge=0.0, le=1.0)]
+    breach_probability_ci95_lower: Annotated[float, Field(ge=0.0, le=1.0)]
+    breach_probability_ci95_upper: Annotated[float, Field(ge=0.0, le=1.0)]
     cvar95: float
 
 
@@ -75,6 +79,12 @@ def summarize_distribution(
         method="linear",
     )
     breaches = sample < guardrail if breach_when == "below" else sample > guardrail
+    breach_count = int(np.count_nonzero(breaches))
+    breach_probability = breach_count / sample.size
+    breach_ci_lower, breach_ci_upper = _wilson_interval(
+        successes=breach_count,
+        observations=int(sample.size),
+    )
     ordered = np.sort(sample)
     tail_mass = 0.05 * sample.size
     full_count = math.floor(tail_mass)
@@ -93,6 +103,26 @@ def summarize_distribution(
         p90=float(p90),
         p95=float(p95),
         standard_deviation=float(np.std(sample, ddof=0)),
-        breach_probability=float(np.count_nonzero(breaches) / sample.size),
+        breach_probability=float(breach_probability),
+        breach_probability_ci95_lower=breach_ci_lower,
+        breach_probability_ci95_upper=breach_ci_upper,
         cvar95=weighted_sum / tail_mass,
     )
+
+
+def _wilson_interval(*, successes: int, observations: int) -> tuple[float, float]:
+    """Return a bounded 95% Wilson score interval for a binomial proportion."""
+
+    probability = successes / observations
+    z_squared = _NORMAL_95_CRITICAL_VALUE**2
+    denominator = 1.0 + z_squared / observations
+    centre = (probability + z_squared / (2.0 * observations)) / denominator
+    half_width = (
+        _NORMAL_95_CRITICAL_VALUE
+        * math.sqrt(
+            probability * (1.0 - probability) / observations
+            + z_squared / (4.0 * observations**2)
+        )
+        / denominator
+    )
+    return max(0.0, centre - half_width), min(1.0, centre + half_width)

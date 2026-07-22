@@ -1,5 +1,19 @@
 import { formatCurrency, formatPercent } from "../../lib/format";
-import type { MetricName } from "./types";
+import type { DecisionStatus, EvidenceGrade, MetricName } from "./types";
+
+export function formatDecisionStatus(
+  status: DecisionStatus,
+  evidenceGrade: EvidenceGrade,
+) {
+  if (status === "conditional" && evidenceGrade === "exploratory") {
+    return "Hold";
+  }
+  return {
+    adopt: "Adopt",
+    conditional: "Pilot only",
+    do_not_adopt: "Do not adopt",
+  }[status];
+}
 
 export const metricLabels: Record<MetricName, string> = {
   revenue: "Revenue",

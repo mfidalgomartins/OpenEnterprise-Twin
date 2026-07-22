@@ -12,6 +12,7 @@ from openenterprise_twin.cli.demo import (
     build_flagship_scenario,
     format_demo_result,
     run_demo,
+    seed_from_settings,
     seed_northstar,
 )
 from openenterprise_twin.domain.scenario import validate_scenario_against_company
@@ -52,6 +53,16 @@ def test_seed_northstar_is_idempotent() -> None:
         record = ScenarioRepository(session).get("current-plan")
         assert record is not None
         assert record.payload == build_baseline_scenario().model_dump(mode="json")
+
+
+def test_seed_from_settings_bootstraps_isolated_sqlite(tmp_path: Path) -> None:
+    settings = Settings(
+        database_url=f"sqlite+pysqlite:///{tmp_path / 'seed.db'}",
+        artifact_directory=tmp_path / "artifacts",
+    )
+
+    assert seed_from_settings(settings) is True
+    assert seed_from_settings(settings) is False
 
 
 @pytest.mark.parametrize("horizon_days", [0, 3651])
@@ -98,8 +109,8 @@ def test_run_demo_creates_paired_experiments_and_reproducibility_output(
     assert result.baseline_experiment_id != result.candidate_experiment_id
     assert result.master_seed == 731
     assert result.replication_count == 2
-    assert result.company_model_version == "0.1.0"
-    assert result.engine_version == "0.1.0"
+    assert result.company_model_version == "0.2.0"
+    assert result.engine_version == "0.2.0"
     assert len(result.comparison_digest) == 64
     assert len(result.brief_digest) == 64
     assert repeated == result
