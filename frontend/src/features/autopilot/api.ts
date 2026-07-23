@@ -1,4 +1,4 @@
-import { apiRequest } from "../../lib/api";
+import { ApiError, type ApiProblem, apiRequest } from "../../lib/api";
 import type {
   AdaptiveComparison,
   CalibrationResponse,
@@ -9,6 +9,23 @@ import type {
   OptimizationResponse,
 } from "./types";
 
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+
+function problemFrom(response: Response, payload: unknown, fallback: string): ApiProblem {
+  if (payload && typeof payload === "object" && "code" in payload) {
+    return payload as ApiProblem;
+  }
+  return {
+    type: "about:blank",
+    title: response.statusText || "Request failed",
+    status: response.status,
+    code: `http_${response.status}`,
+    detail: fallback,
+    trace_id: response.headers.get("X-Trace-ID") ?? "",
+    violations: [],
+  };
+}
+
 export function ingestSyntheticDataset(datasetId: string, days: number) {
   return apiRequest<DatasetIngestResponse>("/api/v1/datasets/synthetic", {
     method: "POST",
@@ -16,10 +33,54 @@ export function ingestSyntheticDataset(datasetId: string, days: number) {
   });
 }
 
+export async function ingestCsvDataset(
+  datasetId: string,
+  companyId: string,
+  csvText: string,
+): Promise<DatasetIngestResponse> {
+  const query = new URLSearchParams({
+    dataset_id: datasetId,
+    company_id: companyId,
+  });
+  const response = await fetch(
+    `${apiBaseUrl}/api/v1/datasets/csv?${query.toString()}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "text/csv", Accept: "application/json" },
+      body: csvText,
+    },
+  );
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new ApiError(problemFrom(response, payload, "CSV ingestion failed."));
+  }
+  return payload as DatasetIngestResponse;
+}
+
+export async function downloadDatasetCsv(datasetId: string): Promise<void> {
+  const path = `/api/v1/datasets/${encodeURIComponent(datasetId)}/export.csv`;
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    headers: { Accept: "text/csv" },
+  });
+  if (!response.ok) {
+    const payload: unknown = await response.json().catch(() => null);
+    throw new ApiError(problemFrom(response, payload, "CSV export failed."));
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = `${datasetId}.csv`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
 export function runCalibration(
   calibrationId: string,
   datasetId: string,
-  backtestCutoff: string,
+  backtestCutoff: string | null,
 ) {
   return apiRequest<CalibrationResponse>("/api/v1/calibrations", {
     method: "POST",

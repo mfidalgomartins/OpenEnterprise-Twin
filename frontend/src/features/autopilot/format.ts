@@ -33,6 +33,17 @@ export function titleCase(value: string): string {
     .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
+/** Coerce a filename into a valid dataset identifier (`^[a-z0-9][a-z0-9-]*$`). */
+export function sanitizeDatasetId(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/\.[a-z0-9]+$/, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 96);
+  return slug || "uploaded-history";
+}
+
 const METRIC_LABELS: Record<string, string> = {
   ebitda: "EBITDA",
   otif: "OTIF",

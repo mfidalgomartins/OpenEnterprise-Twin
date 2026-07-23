@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ChangeEvent, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { ApiError } from "../../lib/api";
@@ -13,8 +13,10 @@ import {
 } from "./components";
 import {
   compareAdaptivePolicy,
+  downloadDatasetCsv,
   getLedgerDecision,
   getMonitoring,
+  ingestCsvDataset,
   ingestSyntheticDataset,
   listLedgerDecisions,
   runCalibration,
@@ -35,6 +37,7 @@ import {
   formatSignedMoney,
   metricIsMoney,
   metricLabel,
+  sanitizeDatasetId,
   titleCase,
 } from "./format";
 
@@ -52,24 +55,65 @@ function credibilityTone(band: string): "high" | "medium" | "low" {
 
 // --- Calibration Studio ------------------------------------------------------
 
+interface LoadedDataset {
+  response: DatasetIngestResponse;
+  datasetId: string;
+  backtestCutoff: string | null;
+}
+
 export function CalibrationStudioPage() {
-  const [dataset, setDataset] = useState<DatasetIngestResponse | null>(null);
+  const [dataset, setDataset] = useState<LoadedDataset | null>(null);
   const [calibration, setCalibration] = useState<CalibrationResponse | null>(
     null,
   );
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const onLoaded = (loaded: LoadedDataset) => {
+    setDataset(loaded);
+    setCalibration(null);
+  };
 
   const ingest = useMutation({
     mutationFn: () => ingestSyntheticDataset("northstar-history", 540),
-    onSuccess: (data) => {
-      setDataset(data);
-      setCalibration(null);
+    onSuccess: (response) =>
+      onLoaded({
+        response,
+        datasetId: "northstar-history",
+        backtestCutoff: "2024-12-31",
+      }),
+  });
+  const ingestCsv = useMutation({
+    mutationFn: async (file: File) => {
+      const datasetId = sanitizeDatasetId(file.name);
+      const response = await ingestCsvDataset(
+        datasetId,
+        "northstar-components",
+        await file.text(),
+      );
+      return { response, datasetId, backtestCutoff: null };
     },
+    onSuccess: onLoaded,
   });
   const calibrate = useMutation({
-    mutationFn: () =>
-      runCalibration("northstar-cal", "northstar-history", "2024-12-31"),
+    mutationFn: () => {
+      if (!dataset) throw new Error("no dataset loaded");
+      return runCalibration(
+        `${dataset.datasetId}-cal`,
+        dataset.datasetId,
+        dataset.backtestCutoff,
+      );
+    },
     onSuccess: setCalibration,
   });
+  const exportCsv = useMutation({
+    mutationFn: () => downloadDatasetCsv(dataset?.datasetId ?? ""),
+  });
+
+  const onFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) ingestCsv.mutate(file);
+    event.target.value = "";
+  };
 
   const provenance = calibration
     ? calibration.calibration.parameters.reduce<Record<string, number>>(
@@ -89,13 +133,29 @@ export function CalibrationStudioPage() {
         description="Fit the Northstar twin to reproducible operating history and score how far it can be trusted."
         actions={
           <div className="ap-actions">
+            <input
+              ref={fileInput}
+              type="file"
+              accept=".csv,text/csv"
+              className="ap-visually-hidden"
+              aria-label="Import CSV history"
+              onChange={onFileChange}
+            />
             <button
               type="button"
               className="ap-button"
               onClick={() => ingest.mutate()}
               disabled={ingest.isPending}
             >
-              {ingest.isPending ? "Importing…" : "Import history"}
+              {ingest.isPending ? "Importing…" : "Import synthetic"}
+            </button>
+            <button
+              type="button"
+              className="ap-button"
+              onClick={() => fileInput.current?.click()}
+              disabled={ingestCsv.isPending}
+            >
+              {ingestCsv.isPending ? "Reading CSV…" : "Import CSV"}
             </button>
             <button
               type="button"
@@ -115,43 +175,57 @@ export function CalibrationStudioPage() {
             detail={errorDetail(ingest.error)}
           />
         ) : null}
+        {ingestCsv.isError ? (
+          <StateBanner
+            kind="error"
+            title="CSV import failed"
+            detail={errorDetail(ingestCsv.error)}
+          />
+        ) : null}
         {!dataset ? (
           <StateBanner
             kind="empty"
             title="No history imported yet"
-            detail="Import the synthetic Northstar history to profile its quality, then calibrate."
+            detail="Import the synthetic Northstar history — or upload a long-format CSV (period_date, series, entity_id, value, unit) — to profile its quality, then calibrate."
           />
         ) : (
           <div className="ap-quality">
             <dl className="ap-stat-row">
               <Stat
                 label="Observations"
-                value={formatNumber(dataset.dataset.observation_count, 0)}
+                value={formatNumber(dataset.response.dataset.observation_count, 0)}
               />
               <Stat
                 label="Series"
-                value={String(dataset.quality.distinct_series)}
+                value={String(dataset.response.quality.distinct_series)}
               />
               <Stat
                 label="Quality score"
-                value={formatPercent(dataset.quality.quality_score)}
-                tone={dataset.quality.quality_score >= 0.95 ? "positive" : "neutral"}
+                value={formatPercent(dataset.response.quality.quality_score)}
+                tone={
+                  dataset.response.quality.quality_score >= 0.95
+                    ? "positive"
+                    : "neutral"
+                }
               />
               <Stat
                 label="Blocking issues"
                 value={String(
-                  dataset.quality.issues.filter((i) => i.severity === "error")
-                    .length,
+                  dataset.response.quality.issues.filter(
+                    (i) => i.severity === "error",
+                  ).length,
                 )}
                 tone={
-                  dataset.quality.issues.some((i) => i.severity === "error")
+                  dataset.response.quality.issues.some(
+                    (i) => i.severity === "error",
+                  )
                     ? "negative"
                     : "positive"
                 }
               />
             </dl>
             <div className="ap-meters">
-              {dataset.quality.components.map((component) => (
+              {dataset.response.quality.components.map((component) => (
                 <Meter
                   key={component.name}
                   label={titleCase(component.name)}
@@ -159,6 +233,19 @@ export function CalibrationStudioPage() {
                   detail={component.detail}
                 />
               ))}
+            </div>
+            <div className="ap-actions">
+              <button
+                type="button"
+                className="ap-button"
+                onClick={() => exportCsv.mutate()}
+                disabled={exportCsv.isPending}
+              >
+                {exportCsv.isPending ? "Preparing…" : "Export CSV"}
+              </button>
+              {exportCsv.isError ? (
+                <span className="ap-note">{errorDetail(exportCsv.error)}</span>
+              ) : null}
             </div>
           </div>
         )}

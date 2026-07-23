@@ -130,7 +130,7 @@ describe("calibration studio", () => {
     const user = userEvent.setup();
     renderWithClient(<CalibrationStudioPage />);
 
-    await user.click(screen.getByRole("button", { name: /import history/i }));
+    await user.click(screen.getByRole("button", { name: /import synthetic/i }));
     expect(
       await screen.findByText("6,600"),
     ).toBeVisible();
@@ -140,6 +140,80 @@ describe("calibration studio", () => {
     );
     expect(await screen.findByText("Decision Grade")).toBeVisible();
     expect(screen.getByText("91.8")).toBeVisible();
+  });
+
+  it("imports a CSV file and profiles its quality", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input) => {
+        const path = String(input);
+        if (path.includes("/api/v1/datasets/csv")) {
+          return Promise.resolve(
+            jsonResponse(
+              {
+                dataset: {
+                  dataset_id: "my-history",
+                  company_id: "northstar-components",
+                  data_digest: "b".repeat(64),
+                  observation_count: 42,
+                  created_at: "2026-07-23T00:00:00Z",
+                },
+                quality: {
+                  dataset_id: "my-history",
+                  data_digest: "b".repeat(64),
+                  total_observations: 42,
+                  distinct_series: 3,
+                  quality_score: 1,
+                  components: [],
+                  issues: [],
+                },
+              },
+              201,
+            ),
+          );
+        }
+        return Promise.reject(new Error(`Unexpected request: ${path}`));
+      }),
+    );
+
+    renderWithClient(<CalibrationStudioPage />);
+    const file = new File(
+      ["period_date,series,entity_id,value,unit\n2025-01-01,otif,,0.96,ratio\n"],
+      "my-history.csv",
+      { type: "text/csv" },
+    );
+    const input = screen.getByLabelText(/import csv history/i);
+    await userEvent.upload(input, file);
+    expect(await screen.findByText("42")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /export csv/i }),
+    ).toBeVisible();
+  });
+
+  it("surfaces a problem detail when a CSV import is rejected", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(() =>
+        Promise.resolve(
+          jsonResponse(
+            {
+              type: "about:blank",
+              title: "Rejected",
+              status: 422,
+              code: "domain_validation",
+              detail: "line 2: unknown series 'nope'",
+              trace_id: "t1",
+              violations: [],
+            },
+            422,
+          ),
+        ),
+      ),
+    );
+    renderWithClient(<CalibrationStudioPage />);
+    const file = new File(["bad"], "bad.csv", { type: "text/csv" });
+    await userEvent.upload(screen.getByLabelText(/import csv history/i), file);
+    expect(await screen.findByText(/unknown series/i)).toBeVisible();
   });
 });
 

@@ -4,6 +4,17 @@ All notable changes to OpenEnterprise Twin are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-07-23
+
+### Added
+- **Calibration Studio CSV in the UI** — the executive frontend can now upload a
+  long-format CSV (with a clear, problem-detail error state) and download the
+  loaded dataset as formula-neutralised CSV, completing the v0.4.0 connector end
+  to end. Calibration is dataset-aware: an uploaded dataset is calibrated
+  without a backtest window it cannot cover.
+
+[0.4.1]: https://github.com/mfidalgomartins/OpenEnterprise-Twin/releases/tag/v0.4.1
+
 ## [0.4.0] - 2026-07-23
 
 ### Added
