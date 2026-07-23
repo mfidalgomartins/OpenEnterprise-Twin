@@ -269,7 +269,19 @@ def validate_adaptive_policy(policy: AdaptivePolicy) -> dict[str, str]:
 )
 def compare_adaptive_policy(
     request: AdaptiveCompareRequest,
+    services: ServicesDependency,
 ) -> AdaptiveComparison:
+    estimated_periods = 2 * request.replications * request.horizon_days
+    if estimated_periods > services.max_adaptive_periods:
+        raise ApiProblemError(
+            status=422,
+            code="adaptive_budget_exceeded",
+            title="Adaptive comparison compute budget exceeded",
+            detail=(
+                f"This comparison needs {estimated_periods:,} simulated periods; "
+                f"the deployment limit is {services.max_adaptive_periods:,}."
+            ),
+        )
     return compare_adaptive_vs_static(
         company=build_northstar_company(),
         static_scenario=build_baseline_scenario(horizon_days=request.horizon_days),

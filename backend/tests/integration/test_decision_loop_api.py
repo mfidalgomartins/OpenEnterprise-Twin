@@ -120,6 +120,37 @@ def test_optimization_flow_and_budget_cap(tmp_path: Path) -> None:
         assert rejected.status_code == 422
 
 
+def test_adaptive_compute_budget_is_capped(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        policy = {
+            "policy_id": "capacity",
+            "rules": [
+                {
+                    "rule_id": "cap",
+                    "metric": "backlog_days",
+                    "operator": "gt",
+                    "threshold": 8.0,
+                    "action": {
+                        "type": "add_overtime_capacity",
+                        "target_id": "assembly",
+                        "magnitude": "0.1",
+                    },
+                }
+            ],
+        }
+        response = client.post(
+            "/api/v1/adaptive-policies/compare",
+            json={
+                "policy": policy,
+                "horizon_days": 730,
+                "replications": 200,
+                "master_seed": 5,
+            },
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "adaptive_budget_exceeded"
+
+
 def test_adaptive_contradiction_is_rejected(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         policy = {

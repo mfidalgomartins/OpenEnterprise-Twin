@@ -187,9 +187,11 @@ class OptimizationLabService:
         *,
         optimizations: OptimizationRepository,
         max_evaluations: int,
+        max_periods: int,
     ) -> None:
         self._optimizations = optimizations
         self._max_evaluations = max_evaluations
+        self._max_periods = max_periods
 
     def optimize(
         self,
@@ -204,6 +206,15 @@ class OptimizationLabService:
             raise DomainValidationError(
                 f"max_evaluations {config.max_evaluations} exceeds the deployment "
                 f"limit {self._max_evaluations}"
+            )
+        estimated_periods = (
+            config.max_evaluations * replications * base_scenario.horizon_days
+        )
+        if estimated_periods > self._max_periods:
+            raise DomainValidationError(
+                f"this search needs up to {estimated_periods:,} simulated periods; "
+                f"the deployment limit is {self._max_periods:,}. Reduce the "
+                "evaluation budget, replications or horizon."
             )
         evaluator = build_simulation_evaluator(
             company=company,

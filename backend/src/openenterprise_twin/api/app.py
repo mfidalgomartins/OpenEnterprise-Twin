@@ -117,6 +117,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         optimization_lab=OptimizationLabService(
             optimizations=SqlOptimizationRepository(session_factory),
             max_evaluations=resolved_settings.max_optimization_evaluations,
+            max_periods=resolved_settings.max_optimization_periods,
         ),
         monitoring=MonitoringService(
             reports=SqlMonitoringRepository(session_factory)
@@ -126,6 +127,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ),
         max_experiment_periods=resolved_settings.max_experiment_periods,
         max_dataset_observations=resolved_settings.max_dataset_observations,
+        max_adaptive_periods=resolved_settings.max_adaptive_periods,
     )
     app.state.settings = resolved_settings
     install_error_handlers(app)

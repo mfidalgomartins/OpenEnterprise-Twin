@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     max_experiment_periods: ExperimentPeriods = 50_000
     max_dataset_observations: DatasetObservations = 200_000
     max_optimization_evaluations: OptimizationEvaluations = 400
+    max_optimization_periods: ExperimentPeriods = 1_000_000
+    max_adaptive_periods: ExperimentPeriods = 150_000
 
     @model_validator(mode="after")
     def require_production_api_key(self) -> "Settings":
