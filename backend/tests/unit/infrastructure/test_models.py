@@ -67,6 +67,10 @@ def test_metadata_uses_lowercase_identifiers_and_portable_json() -> None:
         "scenarios",
         "decisions",
         "decision_events",
+        "historical_datasets",
+        "calibrations",
+        "optimizations",
+        "monitoring_reports",
     }
     assert all(
         identifier == identifier.lower()

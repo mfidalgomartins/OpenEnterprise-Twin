@@ -11,6 +11,12 @@ from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
 from openenterprise_twin.api.schemas import FieldViolation, ProblemDetail
+from openenterprise_twin.application.ledger import (
+    LedgerConflictError,
+    LedgerError,
+    LedgerNotFoundError,
+)
+from openenterprise_twin.domain.errors import DomainValidationError
 
 _LOGGER = logging.getLogger(__name__)
 _TRACE_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
@@ -73,6 +79,38 @@ def install_error_handlers(app: FastAPI) -> None:
             title=error.title,
             detail=error.detail,
             violations=error.violations,
+        )
+
+    @app.exception_handler(DomainValidationError)
+    async def handle_domain_validation(
+        request: Request,
+        error: DomainValidationError,
+    ) -> JSONResponse:
+        return _problem_response(
+            request,
+            status=422,
+            code="domain_validation",
+            title="Request is inconsistent with the domain model",
+            detail=str(error),
+        )
+
+    @app.exception_handler(LedgerError)
+    async def handle_ledger_error(
+        request: Request,
+        error: LedgerError,
+    ) -> JSONResponse:
+        if isinstance(error, LedgerNotFoundError):
+            status = 404
+        elif isinstance(error, LedgerConflictError):
+            status = 409
+        else:
+            status = 409
+        return _problem_response(
+            request,
+            status=status,
+            code=error.code,
+            title="Decision ledger operation rejected",
+            detail=error.detail,
         )
 
     @app.exception_handler(RequestValidationError)

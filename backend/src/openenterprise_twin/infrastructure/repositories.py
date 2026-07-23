@@ -7,6 +7,21 @@ from typing import Any, cast
 from sqlalchemy import CursorResult, Select, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
+from openenterprise_twin.analytics.backtesting import BacktestResult
+from openenterprise_twin.analytics.calibration import CalibrationResult
+from openenterprise_twin.analytics.credibility import CredibilityScore
+from openenterprise_twin.analytics.history import HistoricalDataset
+from openenterprise_twin.analytics.monitoring import MonitoringReport
+from openenterprise_twin.analytics.optimization import (
+    OptimizationConfig,
+    OptimizationResult,
+)
+from openenterprise_twin.analytics.quality import DataQualityReport
+from openenterprise_twin.application.decision_loop import (
+    StoredCalibration,
+    StoredDataset,
+    StoredOptimization,
+)
 from openenterprise_twin.application.ledger import (
     DecisionListItem,
     DecisionSnapshot,
@@ -24,9 +39,13 @@ from openenterprise_twin.domain.ledger import (
 )
 from openenterprise_twin.domain.scenario import Scenario
 from openenterprise_twin.infrastructure.models import (
+    CalibrationRecord,
     DecisionEventRecord,
     DecisionLedgerRecord,
     ExperimentRecord,
+    HistoricalDatasetRecord,
+    MonitoringReportRecord,
+    OptimizationRecord,
     ScenarioRecord,
 )
 
@@ -537,3 +556,239 @@ def _state(value: str) -> DecisionState:
 
 def _optional_state(value: str | None) -> DecisionState | None:
     return value  # type: ignore[return-value]
+
+
+class SqlDatasetRepository:
+    """Persistence for ingested historical datasets and their quality reports."""
+
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+
+    def get(self, dataset_id: str) -> HistoricalDataset | None:
+        with self._session_factory() as session:
+            record = session.get(HistoricalDatasetRecord, dataset_id)
+            if record is None:
+                return None
+            return HistoricalDataset.model_validate(record.payload)
+
+    def get_quality(self, dataset_id: str) -> DataQualityReport | None:
+        with self._session_factory() as session:
+            record = session.get(HistoricalDatasetRecord, dataset_id)
+            if record is None:
+                return None
+            return DataQualityReport.model_validate(record.quality)
+
+    def save(
+        self, dataset: HistoricalDataset, quality: DataQualityReport
+    ) -> StoredDataset:
+        with self._session_factory() as session, session.begin():
+            record = HistoricalDatasetRecord(
+                dataset_id=dataset.dataset_id,
+                company_id=dataset.company_id,
+                data_digest=dataset.data_digest,
+                observation_count=len(dataset.observations),
+                payload=dataset.model_dump(mode="json"),
+                quality=quality.model_dump(mode="json"),
+            )
+            session.add(record)
+            session.flush()
+            created_at = record.created_at
+        return StoredDataset(
+            dataset_id=dataset.dataset_id,
+            company_id=dataset.company_id,
+            data_digest=dataset.data_digest,
+            observation_count=len(dataset.observations),
+            quality=quality,
+            created_at=created_at,
+        )
+
+    def list(
+        self, *, limit: int, after_id: str | None
+    ) -> tuple[StoredDataset, ...]:
+        with self._session_factory() as session:
+            statement: Select[tuple[HistoricalDatasetRecord]] = select(
+                HistoricalDatasetRecord
+            )
+            if after_id is not None:
+                statement = statement.where(
+                    HistoricalDatasetRecord.dataset_id > after_id
+                )
+            statement = statement.order_by(
+                HistoricalDatasetRecord.dataset_id
+            ).limit(limit)
+            return tuple(
+                StoredDataset(
+                    dataset_id=record.dataset_id,
+                    company_id=record.company_id,
+                    data_digest=record.data_digest,
+                    observation_count=record.observation_count,
+                    quality=DataQualityReport.model_validate(record.quality),
+                    created_at=record.created_at,
+                )
+                for record in session.scalars(statement)
+            )
+
+
+class SqlCalibrationRepository:
+    """Persistence for calibrations, credibility scores and backtests."""
+
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+
+    def get(self, calibration_id: str) -> StoredCalibration | None:
+        with self._session_factory() as session:
+            record = session.get(CalibrationRecord, calibration_id)
+            if record is None:
+                return None
+            return self._to_stored(record)
+
+    def save(self, stored: StoredCalibration) -> StoredCalibration:
+        with self._session_factory() as session, session.begin():
+            record = CalibrationRecord(
+                calibration_id=stored.calibration_id,
+                dataset_id=stored.dataset_id,
+                company_model_version=stored.calibration.company_model_version,
+                digest=stored.calibration.digest,
+                calibration=stored.calibration.model_dump(mode="json"),
+                credibility=stored.credibility.model_dump(mode="json"),
+                backtests=[
+                    backtest.model_dump(mode="json")
+                    for backtest in stored.backtests
+                ],
+                created_at=stored.created_at,
+            )
+            session.add(record)
+            session.flush()
+            created_at = record.created_at
+        return StoredCalibration(
+            calibration_id=stored.calibration_id,
+            dataset_id=stored.dataset_id,
+            calibration=stored.calibration,
+            credibility=stored.credibility,
+            backtests=stored.backtests,
+            created_at=created_at,
+        )
+
+    def list(
+        self, *, limit: int, after_id: str | None
+    ) -> tuple[StoredCalibration, ...]:
+        with self._session_factory() as session:
+            statement: Select[tuple[CalibrationRecord]] = select(CalibrationRecord)
+            if after_id is not None:
+                statement = statement.where(
+                    CalibrationRecord.calibration_id > after_id
+                )
+            statement = statement.order_by(
+                CalibrationRecord.calibration_id
+            ).limit(limit)
+            return tuple(
+                self._to_stored(record) for record in session.scalars(statement)
+            )
+
+    @staticmethod
+    def _to_stored(record: CalibrationRecord) -> StoredCalibration:
+        return StoredCalibration(
+            calibration_id=record.calibration_id,
+            dataset_id=record.dataset_id,
+            calibration=CalibrationResult.model_validate(record.calibration),
+            credibility=CredibilityScore.model_validate(record.credibility),
+            backtests=tuple(
+                BacktestResult.model_validate(item) for item in record.backtests
+            ),
+            created_at=record.created_at,
+        )
+
+
+class SqlOptimizationRepository:
+    """Persistence for completed policy-optimization runs."""
+
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+
+    def get(self, optimization_id: int) -> StoredOptimization | None:
+        with self._session_factory() as session:
+            record = session.get(OptimizationRecord, optimization_id)
+            if record is None:
+                return None
+            return self._to_stored(record)
+
+    def save(
+        self,
+        *,
+        company_model_version: str,
+        config: OptimizationConfig,
+        result: OptimizationResult,
+    ) -> StoredOptimization:
+        with self._session_factory() as session, session.begin():
+            record = OptimizationRecord(
+                company_model_version=company_model_version,
+                digest=result.digest,
+                evaluations=result.evaluations,
+                config=config.model_dump(mode="json"),
+                result=result.model_dump(mode="json"),
+            )
+            session.add(record)
+            session.flush()
+            optimization_id = record.id
+            created_at = record.created_at
+        return StoredOptimization(
+            optimization_id=optimization_id,
+            digest=result.digest,
+            evaluations=result.evaluations,
+            result=result,
+            created_at=created_at,
+        )
+
+    def list(
+        self, *, limit: int, before_id: int | None
+    ) -> tuple[StoredOptimization, ...]:
+        with self._session_factory() as session:
+            statement: Select[tuple[OptimizationRecord]] = select(
+                OptimizationRecord
+            )
+            if before_id is not None:
+                statement = statement.where(OptimizationRecord.id < before_id)
+            statement = statement.order_by(OptimizationRecord.id.desc()).limit(limit)
+            return tuple(
+                self._to_stored(record) for record in session.scalars(statement)
+            )
+
+    @staticmethod
+    def _to_stored(record: OptimizationRecord) -> StoredOptimization:
+        return StoredOptimization(
+            optimization_id=record.id,
+            digest=record.digest,
+            evaluations=record.evaluations,
+            result=OptimizationResult.model_validate(record.result),
+            created_at=record.created_at,
+        )
+
+
+class SqlMonitoringRepository:
+    """Persistence for per-decision monitoring reports."""
+
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+
+    def save(self, report: MonitoringReport) -> None:
+        with self._session_factory() as session, session.begin():
+            session.add(
+                MonitoringReportRecord(
+                    decision_id=report.decision_id,
+                    recommended_level=report.recommended_level,
+                    report=report.model_dump(mode="json"),
+                )
+            )
+            session.flush()
+
+    def latest(self, decision_id: str) -> MonitoringReport | None:
+        with self._session_factory() as session:
+            record = session.scalar(
+                select(MonitoringReportRecord)
+                .where(MonitoringReportRecord.decision_id == decision_id)
+                .order_by(MonitoringReportRecord.id.desc())
+                .limit(1)
+            )
+            if record is None:
+                return None
+            return MonitoringReport.model_validate(record.report)

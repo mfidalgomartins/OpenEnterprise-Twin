@@ -350,3 +350,113 @@ class DecisionEventRecord(Base):
         default=utc_now,
         server_default=func.now(),
     )
+
+
+class HistoricalDatasetRecord(Base):
+    """An ingested historical dataset with its data-quality profile."""
+
+    __tablename__ = "historical_datasets"
+    __table_args__ = (
+        Index("ix_historical_datasets_company_id", "company_id"),
+    )
+
+    dataset_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    company_id: Mapped[str] = mapped_column(Text, nullable=False)
+    data_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    observation_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    payload: Mapped[JsonObject] = mapped_column(_json_type(), nullable=False)
+    quality: Mapped[JsonObject] = mapped_column(_json_type(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+
+
+class CalibrationRecord(Base):
+    """A calibration of a twin with its credibility score and backtests."""
+
+    __tablename__ = "calibrations"
+    __table_args__ = (
+        Index("ix_calibrations_dataset_id", "dataset_id"),
+        Index("ix_calibrations_created_at", "created_at", "calibration_id"),
+    )
+
+    calibration_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    dataset_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("historical_datasets.dataset_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    company_model_version: Mapped[str] = mapped_column(Text, nullable=False)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    calibration: Mapped[JsonObject] = mapped_column(_json_type(), nullable=False)
+    credibility: Mapped[JsonObject] = mapped_column(_json_type(), nullable=False)
+    backtests: Mapped[JsonObject] = mapped_column(_json_type(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+
+
+class OptimizationRecord(Base):
+    """A completed policy-optimization run and its Pareto result."""
+
+    __tablename__ = "optimizations"
+    __table_args__ = (
+        Index("ix_optimizations_created_at", "created_at", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        _identity_type(),
+        Identity(always=True),
+        primary_key=True,
+    )
+    company_model_version: Mapped[str] = mapped_column(Text, nullable=False)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    evaluations: Mapped[int] = mapped_column(Integer, nullable=False)
+    config: Mapped[JsonObject] = mapped_column(_json_type(), nullable=False)
+    result: Mapped[JsonObject] = mapped_column(_json_type(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+
+
+class MonitoringReportRecord(Base):
+    """A monitoring report reconciling realised outcomes for a decision."""
+
+    __tablename__ = "monitoring_reports"
+    __table_args__ = (
+        CheckConstraint(
+            "recommended_level IN ("
+            "'within_expectation', 'early_warning', 'material_deviation', "
+            "'recalibration_required', 'decision_review_required')",
+            name="recommended_level",
+        ),
+        Index("ix_monitoring_reports_decision_id", "decision_id", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        _identity_type(),
+        Identity(always=True),
+        primary_key=True,
+    )
+    decision_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("decisions.decision_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    recommended_level: Mapped[str] = mapped_column(Text, nullable=False)
+    report: Mapped[JsonObject] = mapped_column(_json_type(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )

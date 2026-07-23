@@ -10,7 +10,13 @@ from fastapi.security import APIKeyHeader
 from sqlalchemy.orm import Session, sessionmaker
 
 from openenterprise_twin.api.errors import ApiProblemError
+from openenterprise_twin.application.decision_loop import (
+    CalibrationStudioService,
+    MonitoringService,
+    OptimizationLabService,
+)
 from openenterprise_twin.application.experiments import ExperimentRunner
+from openenterprise_twin.application.ledger import DecisionLedgerService
 from openenterprise_twin.application.ports import (
     ArtifactReader,
     DecisionEvidenceRepository,
@@ -26,7 +32,12 @@ class AppServices:
     artifact_store: ArtifactReader
     decision_repository: DecisionEvidenceRepository
     experiment_runner: ExperimentRunner
+    calibration_studio: CalibrationStudioService
+    optimization_lab: OptimizationLabService
+    monitoring: MonitoringService
+    decision_ledger: DecisionLedgerService
     max_experiment_periods: int
+    max_dataset_observations: int
 
 
 @dataclass(frozen=True, slots=True)

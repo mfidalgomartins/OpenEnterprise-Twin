@@ -15,6 +15,8 @@ ReplicationWorkerCount = Annotated[int, Field(ge=1, le=16)]
 ShutdownTimeout = Annotated[float, Field(gt=0, le=300)]
 RequestBodyBytes = Annotated[int, Field(ge=1, le=100_000_000)]
 ExperimentPeriods = Annotated[int, Field(ge=1, le=100_000_000)]
+DatasetObservations = Annotated[int, Field(ge=1, le=1_000_000)]
+OptimizationEvaluations = Annotated[int, Field(ge=8, le=20_000)]
 _DEVELOPMENT_TRUSTED_HOSTS = ("localhost", "127.0.0.1", "testserver")
 
 
@@ -43,8 +45,10 @@ class Settings(BaseSettings):
     )
     api_key: SecretStr | None = None
     trusted_hosts: tuple[str, ...] = _DEVELOPMENT_TRUSTED_HOSTS
-    max_request_body_bytes: RequestBodyBytes = 1_048_576
+    max_request_body_bytes: RequestBodyBytes = 4_194_304
     max_experiment_periods: ExperimentPeriods = 50_000
+    max_dataset_observations: DatasetObservations = 200_000
+    max_optimization_evaluations: OptimizationEvaluations = 400
 
     @model_validator(mode="after")
     def require_production_api_key(self) -> "Settings":
