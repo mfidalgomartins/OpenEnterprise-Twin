@@ -46,6 +46,16 @@ from openenterprise_twin.analytics.history import (
     build_dataset,
     compute_data_digest,
 )
+from openenterprise_twin.analytics.monitoring import (
+    DriftAssessment,
+    KpiOutcome,
+    MetricPrediction,
+    MonitoringAlert,
+    MonitoringReport,
+    OutcomeRecord,
+    monitor_outcomes,
+    reconcile_alerts,
+)
 from openenterprise_twin.analytics.quality import (
     DataQualityIssue,
     DataQualityReport,
@@ -69,10 +79,16 @@ __all__ = [
     "DataQualityIssue",
     "DataQualityReport",
     "DatasetProvenance",
+    "DriftAssessment",
     "EstimatedParameter",
     "HistoricalDataset",
     "HistoricalObservation",
     "KpiBacktest",
+    "KpiOutcome",
+    "MetricPrediction",
+    "MonitoringAlert",
+    "MonitoringReport",
+    "OutcomeRecord",
     "SeasonalityEstimate",
     "SeriesName",
     "assess_data_quality",
@@ -86,6 +102,8 @@ __all__ = [
     "derive_adaptive_scenario",
     "evaluate_adaptive_policy",
     "generate_northstar_history",
+    "monitor_outcomes",
     "observations_from_trace",
+    "reconcile_alerts",
     "score_credibility",
 ]
