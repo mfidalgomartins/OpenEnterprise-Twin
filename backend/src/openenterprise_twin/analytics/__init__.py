@@ -6,6 +6,17 @@ calibrated, credibility-scored twin that the optimizer and monitoring loop
 build on.
 """
 
+from openenterprise_twin.analytics.adaptive import (
+    Activation,
+    AdaptiveComparison,
+    AdaptiveEvaluation,
+    AdaptivePolicy,
+    AdaptiveRule,
+    compare_adaptive_vs_static,
+    derive_adaptive_scenario,
+    evaluate_adaptive_policy,
+    observations_from_trace,
+)
 from openenterprise_twin.analytics.backtesting import (
     BacktestResult,
     KpiBacktest,
@@ -44,6 +55,11 @@ from openenterprise_twin.analytics.synthetic import generate_northstar_history
 
 __all__ = [
     "SERIES_REGISTRY",
+    "Activation",
+    "AdaptiveComparison",
+    "AdaptiveEvaluation",
+    "AdaptivePolicy",
+    "AdaptiveRule",
     "BacktestResult",
     "CalibrationComparison",
     "CalibrationResult",
@@ -64,8 +80,12 @@ __all__ = [
     "backtest_rolling",
     "build_dataset",
     "calibrate_twin",
+    "compare_adaptive_vs_static",
     "compare_calibrations",
     "compute_data_digest",
+    "derive_adaptive_scenario",
+    "evaluate_adaptive_policy",
     "generate_northstar_history",
+    "observations_from_trace",
     "score_credibility",
 ]
