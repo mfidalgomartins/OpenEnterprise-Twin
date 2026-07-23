@@ -2,16 +2,30 @@
 
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import Any, cast
 
-from sqlalchemy import Select, select
+from sqlalchemy import CursorResult, Select, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
+from openenterprise_twin.application.ledger import (
+    DecisionListItem,
+    DecisionSnapshot,
+    LedgerConflictError,
+)
 from openenterprise_twin.application.ports import (
     CompletedCandidateRecord,
     ExperimentDecisionRecord,
 )
+from openenterprise_twin.domain.ledger import (
+    ApprovalRecord,
+    DecisionContent,
+    DecisionState,
+    DecisionTransition,
+)
 from openenterprise_twin.domain.scenario import Scenario
 from openenterprise_twin.infrastructure.models import (
+    DecisionEventRecord,
+    DecisionLedgerRecord,
     ExperimentRecord,
     ScenarioRecord,
 )
@@ -325,3 +339,201 @@ class SqlAlchemyDecisionEvidenceRepository:
                     )
                 )
             return tuple(records)
+
+
+class SqlDecisionLedgerRepository:
+    """Append-only, optimistically-locked persistence for the decision ledger.
+
+    Each mutation runs in its own short transaction: the snapshot row carries the
+    authoritative version and a conditional UPDATE guarantees that a concurrent
+    writer cannot silently overwrite it. Every state change is also written as an
+    immutable event row, so the audit trail can never diverge from the snapshot.
+    """
+
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+
+    def get(self, decision_id: str) -> DecisionSnapshot | None:
+        with self._session_factory() as session:
+            return self._load(session, decision_id)
+
+    def create(
+        self,
+        *,
+        decision_id: str,
+        content: DecisionContent,
+        transition: DecisionTransition,
+        occurred_at: datetime,
+    ) -> DecisionSnapshot:
+        with self._session_factory() as session, session.begin():
+            record = DecisionLedgerRecord(
+                decision_id=decision_id,
+                title=content.title,
+                owner=content.owner,
+                state="draft",
+                version=1,
+                content=content.model_dump(mode="json"),
+                created_at=occurred_at,
+                updated_at=occurred_at,
+            )
+            session.add(record)
+            session.flush()
+            session.add(
+                _event_row(
+                    decision_id=decision_id,
+                    sequence=1,
+                    content_digest=content.content_digest(),
+                    transition=transition,
+                    approval=None,
+                )
+            )
+            session.flush()
+        snapshot = self.get(decision_id)
+        if snapshot is None:  # pragma: no cover - defensive
+            raise RuntimeError("decision vanished immediately after creation")
+        return snapshot
+
+    def append(
+        self,
+        *,
+        decision_id: str,
+        expected_version: int,
+        new_state: DecisionState,
+        content: DecisionContent,
+        transition: DecisionTransition,
+        approval: ApprovalRecord | None,
+        occurred_at: datetime,
+    ) -> DecisionSnapshot:
+        with self._session_factory() as session, session.begin():
+            statement = (
+                update(DecisionLedgerRecord)
+                .where(
+                    DecisionLedgerRecord.decision_id == decision_id,
+                    DecisionLedgerRecord.version == expected_version,
+                )
+                .values(
+                    state=new_state,
+                    content=content.model_dump(mode="json"),
+                    version=expected_version + 1,
+                    updated_at=occurred_at,
+                )
+            )
+            result = cast("CursorResult[Any]", session.execute(statement))
+            if result.rowcount != 1:
+                raise LedgerConflictError(
+                    f"decision '{decision_id}' was not at version "
+                    f"{expected_version}"
+                )
+            session.add(
+                _event_row(
+                    decision_id=decision_id,
+                    sequence=expected_version + 1,
+                    content_digest=content.content_digest(),
+                    transition=transition,
+                    approval=approval,
+                )
+            )
+            session.flush()
+        snapshot = self.get(decision_id)
+        if snapshot is None:  # pragma: no cover - defensive
+            raise RuntimeError("decision vanished immediately after append")
+        return snapshot
+
+    def list(
+        self,
+        *,
+        limit: int,
+        after_id: str | None,
+    ) -> tuple[DecisionListItem, ...]:
+        with self._session_factory() as session:
+            statement: Select[tuple[DecisionLedgerRecord]] = select(
+                DecisionLedgerRecord
+            )
+            if after_id is not None:
+                statement = statement.where(
+                    DecisionLedgerRecord.decision_id > after_id
+                )
+            statement = statement.order_by(
+                DecisionLedgerRecord.decision_id
+            ).limit(limit)
+            return tuple(
+                DecisionListItem(
+                    decision_id=record.decision_id,
+                    title=record.title,
+                    owner=record.owner,
+                    state=_state(record.state),
+                    version=record.version,
+                    created_at=record.created_at,
+                    updated_at=record.updated_at,
+                )
+                for record in session.scalars(statement)
+            )
+
+    def _load(
+        self, session: Session, decision_id: str
+    ) -> DecisionSnapshot | None:
+        record = session.get(DecisionLedgerRecord, decision_id)
+        if record is None:
+            return None
+        events = tuple(
+            session.scalars(
+                select(DecisionEventRecord)
+                .where(DecisionEventRecord.decision_id == decision_id)
+                .order_by(DecisionEventRecord.sequence)
+            )
+        )
+        transitions = tuple(
+            DecisionTransition(
+                from_state=_optional_state(event.from_state),
+                to_state=_state(event.to_state),
+                actor=event.actor,
+                occurred_at=event.occurred_at,
+                note=event.note,
+            )
+            for event in events
+        )
+        approvals = tuple(
+            ApprovalRecord.model_validate(event.approval)
+            for event in events
+            if event.approval is not None
+        )
+        return DecisionSnapshot(
+            decision_id=record.decision_id,
+            state=_state(record.state),
+            version=record.version,
+            owner=record.owner,
+            content=DecisionContent.model_validate(record.content),
+            transitions=transitions,
+            approvals=approvals,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+
+def _event_row(
+    *,
+    decision_id: str,
+    sequence: int,
+    content_digest: str,
+    transition: DecisionTransition,
+    approval: ApprovalRecord | None,
+) -> DecisionEventRecord:
+    return DecisionEventRecord(
+        decision_id=decision_id,
+        sequence=sequence,
+        from_state=transition.from_state,
+        to_state=transition.to_state,
+        actor=transition.actor,
+        note=transition.note,
+        content_digest=content_digest,
+        approval=approval.model_dump(mode="json") if approval is not None else None,
+        occurred_at=transition.occurred_at,
+    )
+
+
+def _state(value: str) -> DecisionState:
+    return _optional_state(value)  # type: ignore[return-value]
+
+
+def _optional_state(value: str | None) -> DecisionState | None:
+    return value  # type: ignore[return-value]

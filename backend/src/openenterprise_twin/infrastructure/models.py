@@ -246,3 +246,107 @@ class ExperimentRecord(Base):
         onupdate=utc_now,
         server_default=func.now(),
     )
+
+
+_DECISION_STATES = (
+    "draft",
+    "evidence_ready",
+    "under_review",
+    "approved",
+    "implemented",
+    "monitoring",
+    "successful",
+    "underperformed",
+    "superseded",
+    "abandoned",
+)
+_DECISION_STATE_SQL = ", ".join(f"'{state}'" for state in _DECISION_STATES)
+
+
+class DecisionLedgerRecord(Base):
+    """Current, version-controlled snapshot of one governed decision."""
+
+    __tablename__ = "decisions"
+    __table_args__ = (
+        CheckConstraint(
+            f"state IN ({_DECISION_STATE_SQL})",
+            name="state",
+        ),
+        CheckConstraint("version >= 1", name="version_positive"),
+        Index("ix_decisions_state", "state"),
+        Index("ix_decisions_updated_at", "updated_at", "decision_id"),
+    )
+
+    decision_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    owner: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="draft",
+        server_default=text("'draft'"),
+    )
+    version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default=text("1"),
+    )
+    content: Mapped[JsonObject] = mapped_column(_json_type(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.now(),
+    )
+
+
+class DecisionEventRecord(Base):
+    """Append-only audit event for a decision transition, revision or approval."""
+
+    __tablename__ = "decision_events"
+    __table_args__ = (
+        CheckConstraint(
+            f"to_state IN ({_DECISION_STATE_SQL})",
+            name="to_state",
+        ),
+        CheckConstraint("sequence >= 1", name="sequence_positive"),
+        UniqueConstraint(
+            "decision_id",
+            "sequence",
+            name="uq_decision_events_decision_id",
+        ),
+        Index("ix_decision_events_decision_id", "decision_id", "sequence"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        _identity_type(),
+        Identity(always=True),
+        primary_key=True,
+    )
+    decision_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("decisions.decision_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    from_state: Mapped[str | None] = mapped_column(Text, nullable=True)
+    to_state: Mapped[str] = mapped_column(Text, nullable=False)
+    actor: Mapped[str] = mapped_column(Text, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    approval: Mapped[JsonObject | None] = mapped_column(_json_type(), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
