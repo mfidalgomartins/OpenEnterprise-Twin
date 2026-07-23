@@ -70,7 +70,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     expose_docs = resolved_settings.deployment_environment != "production"
     app = FastAPI(
         title="OpenEnterprise Twin API",
-        version="0.3.1",
+        version="0.3.2",
         lifespan=lifespan,
         docs_url="/docs" if expose_docs else None,
         redoc_url="/redoc" if expose_docs else None,

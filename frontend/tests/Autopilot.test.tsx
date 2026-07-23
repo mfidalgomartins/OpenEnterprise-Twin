@@ -170,9 +170,69 @@ describe("decision ledger", () => {
   });
 });
 
+describe("decision ledger error state", () => {
+  it("surfaces a problem detail when the ledger request fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(() =>
+        Promise.resolve(
+          jsonResponse(
+            {
+              type: "about:blank",
+              title: "Service unavailable",
+              status: 503,
+              code: "ledger_unavailable",
+              detail: "The ledger is temporarily unavailable.",
+              trace_id: "t1",
+              violations: [],
+            },
+            503,
+          ),
+        ),
+      ),
+    );
+    renderWithClient(<DecisionLedgerPage />);
+    expect(
+      await screen.findByText(/could not load the ledger/i),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/the ledger is temporarily unavailable/i),
+    ).toBeVisible();
+  });
+});
+
 describe("monitoring center", () => {
   it("prompts for a decision id", () => {
     renderWithClient(<MonitoringCenterPage />);
     expect(screen.getByText(/enter a decision/i)).toBeVisible();
+  });
+
+  it("shows the empty state when a decision has no outcomes (404)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(() =>
+        Promise.resolve(
+          jsonResponse(
+            {
+              type: "about:blank",
+              title: "No monitoring report",
+              status: 404,
+              code: "monitoring_not_found",
+              detail: "No outcomes yet.",
+              trace_id: "t1",
+              violations: [],
+            },
+            404,
+          ),
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<MonitoringCenterPage />);
+    await user.type(screen.getByPlaceholderText(/northstar-pricing/i), "ghost");
+    await user.click(screen.getByRole("button", { name: /load outcomes/i }));
+    expect(
+      await screen.findByText(/no outcomes recorded/i),
+    ).toBeVisible();
   });
 });
