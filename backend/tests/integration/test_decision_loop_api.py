@@ -154,7 +154,7 @@ def test_adaptive_contradiction_is_rejected(tmp_path: Path) -> None:
 def test_decision_lifecycle_and_optimistic_conflict(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         created = client.post(
-            "/api/v1/decisions",
+            "/api/v1/ledger/decisions",
             json={"decision_id": "dec-1", "content": _decision_content()},
         )
         assert created.status_code == 201
@@ -162,7 +162,7 @@ def test_decision_lifecycle_and_optimistic_conflict(tmp_path: Path) -> None:
 
         assert (
             client.post(
-                "/api/v1/decisions/dec-1/transitions",
+                "/api/v1/ledger/decisions/dec-1/transitions",
                 json={
                     "expected_version": 1,
                     "target": "evidence_ready",
@@ -173,7 +173,7 @@ def test_decision_lifecycle_and_optimistic_conflict(tmp_path: Path) -> None:
         )
         # Stale version is rejected by optimistic concurrency control.
         conflict = client.post(
-            "/api/v1/decisions/dec-1/transitions",
+            "/api/v1/ledger/decisions/dec-1/transitions",
             json={
                 "expected_version": 1,
                 "target": "under_review",
@@ -183,13 +183,13 @@ def test_decision_lifecycle_and_optimistic_conflict(tmp_path: Path) -> None:
         assert conflict.status_code == 409
 
         client.post(
-            "/api/v1/decisions/dec-1/transitions",
+            "/api/v1/ledger/decisions/dec-1/transitions",
             json={"expected_version": 2, "target": "under_review", "actor": "cfo"},
         )
-        snapshot = client.get("/api/v1/decisions/dec-1").json()
+        snapshot = client.get("/api/v1/ledger/decisions/dec-1").json()
         digest = DecisionContent.model_validate(snapshot["content"]).content_digest()
         approved = client.post(
-            "/api/v1/decisions/dec-1/transitions",
+            "/api/v1/ledger/decisions/dec-1/transitions",
             json={
                 "expected_version": 3,
                 "target": "approved",
@@ -205,7 +205,7 @@ def test_decision_lifecycle_and_optimistic_conflict(tmp_path: Path) -> None:
         assert approved.status_code == 200
         assert approved.json()["state"] == "approved"
 
-        packet = client.get("/api/v1/decisions/dec-1/packet")
+        packet = client.get("/api/v1/ledger/decisions/dec-1/packet")
         assert packet.status_code == 200
         assert packet.json()["state"] == "approved"
 
@@ -213,21 +213,21 @@ def test_decision_lifecycle_and_optimistic_conflict(tmp_path: Path) -> None:
 def test_self_approval_is_rejected_over_http(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         client.post(
-            "/api/v1/decisions",
+            "/api/v1/ledger/decisions",
             json={"decision_id": "dec-1", "content": _decision_content()},
         )
         client.post(
-            "/api/v1/decisions/dec-1/transitions",
+            "/api/v1/ledger/decisions/dec-1/transitions",
             json={"expected_version": 1, "target": "evidence_ready", "actor": "cfo"},
         )
         client.post(
-            "/api/v1/decisions/dec-1/transitions",
+            "/api/v1/ledger/decisions/dec-1/transitions",
             json={"expected_version": 2, "target": "under_review", "actor": "cfo"},
         )
-        snapshot = client.get("/api/v1/decisions/dec-1").json()
+        snapshot = client.get("/api/v1/ledger/decisions/dec-1").json()
         digest = DecisionContent.model_validate(snapshot["content"]).content_digest()
         response = client.post(
-            "/api/v1/decisions/dec-1/transitions",
+            "/api/v1/ledger/decisions/dec-1/transitions",
             json={
                 "expected_version": 3,
                 "target": "approved",
@@ -246,11 +246,11 @@ def test_self_approval_is_rejected_over_http(tmp_path: Path) -> None:
 def test_monitoring_flow(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         client.post(
-            "/api/v1/decisions",
+            "/api/v1/ledger/decisions",
             json={"decision_id": "dec-1", "content": _decision_content()},
         )
         outcomes = client.post(
-            "/api/v1/decisions/dec-1/outcomes",
+            "/api/v1/ledger/decisions/dec-1/outcomes",
             json={
                 "predictions": [
                     {
@@ -273,12 +273,12 @@ def test_monitoring_flow(tmp_path: Path) -> None:
         assert outcomes.status_code == 201
         assert outcomes.json()["recommended_level"] == "decision_review_required"
 
-        latest = client.get("/api/v1/decisions/dec-1/monitoring")
+        latest = client.get("/api/v1/ledger/decisions/dec-1/monitoring")
         assert latest.status_code == 200
         assert latest.json()["alerts"]
 
 
 def test_missing_monitoring_is_404(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
-        response = client.get("/api/v1/decisions/ghost/monitoring")
+        response = client.get("/api/v1/ledger/decisions/ghost/monitoring")
         assert response.status_code == 404

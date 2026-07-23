@@ -308,7 +308,7 @@ class DecisionSnapshotResponse(LoopModel):
 
 
 @decision_loop_router.post(
-    "/decisions",
+    "/ledger/decisions",
     response_model=DecisionSnapshotResponse,
     status_code=status.HTTP_201_CREATED,
 )
@@ -323,12 +323,12 @@ def create_decision(
         actor=request.content.owner,
         occurred_at=datetime.now(UTC),
     )
-    response.headers["Location"] = f"/api/v1/decisions/{snapshot.decision_id}"
+    response.headers["Location"] = f"/api/v1/ledger/decisions/{snapshot.decision_id}"
     return _snapshot_response(snapshot)
 
 
 @decision_loop_router.get(
-    "/decisions",
+    "/ledger/decisions",
     response_model=tuple[DecisionListItem, ...],
 )
 def list_decisions(
@@ -340,7 +340,7 @@ def list_decisions(
 
 
 @decision_loop_router.get(
-    "/decisions/{decision_id}",
+    "/ledger/decisions/{decision_id}",
     response_model=DecisionSnapshotResponse,
 )
 def get_decision(
@@ -351,7 +351,7 @@ def get_decision(
 
 
 @decision_loop_router.post(
-    "/decisions/{decision_id}/transitions",
+    "/ledger/decisions/{decision_id}/transitions",
     response_model=DecisionSnapshotResponse,
 )
 def transition_decision(
@@ -372,7 +372,7 @@ def transition_decision(
 
 
 @decision_loop_router.get(
-    "/decisions/{decision_id}/packet",
+    "/ledger/decisions/{decision_id}/packet",
     response_model=DecisionPacket,
 )
 def export_decision_packet(
@@ -396,7 +396,7 @@ class OutcomeRequest(LoopModel):
 
 
 @decision_loop_router.post(
-    "/decisions/{decision_id}/outcomes",
+    "/ledger/decisions/{decision_id}/outcomes",
     response_model=MonitoringReport,
     status_code=status.HTTP_201_CREATED,
 )
@@ -416,7 +416,7 @@ def record_outcomes(
 
 
 @decision_loop_router.get(
-    "/decisions/{decision_id}/monitoring",
+    "/ledger/decisions/{decision_id}/monitoring",
     response_model=MonitoringReport,
 )
 def get_monitoring(
