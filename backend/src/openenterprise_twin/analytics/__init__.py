@@ -46,6 +46,11 @@ from openenterprise_twin.analytics.history import (
     build_dataset,
     compute_data_digest,
 )
+from openenterprise_twin.analytics.ingestion import (
+    CSV_COLUMNS,
+    dataset_to_csv,
+    observations_from_csv,
+)
 from openenterprise_twin.analytics.monitoring import (
     DriftAssessment,
     KpiOutcome,
@@ -76,6 +81,7 @@ from openenterprise_twin.analytics.quality import (
 from openenterprise_twin.analytics.synthetic import generate_northstar_history
 
 __all__ = [
+    "CSV_COLUMNS",
     "SERIES_REGISTRY",
     "Activation",
     "AdaptiveComparison",
@@ -119,11 +125,13 @@ __all__ = [
     "compare_adaptive_vs_static",
     "compare_calibrations",
     "compute_data_digest",
+    "dataset_to_csv",
     "decode_levers",
     "derive_adaptive_scenario",
     "evaluate_adaptive_policy",
     "generate_northstar_history",
     "monitor_outcomes",
+    "observations_from_csv",
     "observations_from_trace",
     "optimize_policies",
     "reconcile_alerts",

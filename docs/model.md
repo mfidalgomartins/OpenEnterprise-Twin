@@ -231,3 +231,63 @@ Production planning separately proves that declared starts reconcile to resource
 Every trace retains company-model version, scenario-schema version, engine version, tape version, RNG algorithm, seed, replication ID, resolved-assumption hash, tape digest and trace digest. Experiments add company hash, plugin versions, replication count, lifecycle, guardrails, timestamps and result digest. Comparisons retain both experiment and assumption digests; briefs retain their own schema version, the comparison digest and all source provenance.
 
 Reproduction therefore requires the recorded code-compatible versions and the complete resolved company/scenario inputs—not only the seed.
+
+## Decision-loop analytics (v0.3+)
+
+The `analytics` layer is a pure, deterministic extension of the model. Its
+mathematics are documented here; every artifact is content-addressed with a
+SHA-256 over its canonical JSON (`analytics/_digest.canonical_digest`).
+
+### Calibration
+
+For each canonical series and entity, the sample mean is the point estimate and
+the sample standard deviation is the dispersion. A parameter is `observed` when
+the sample size is at least 30, `estimated` for 2–29 points, and `assumed` when
+no history exists (carried over from the authored company model). The 95%
+confidence interval of the mean uses the normal approximation
+`x̄ ± z·s/√n` with `z = 1.959964`. Seasonality is a bucketed multiplicative
+index (weekday or calendar month); the profile with the larger amplitude
+`(max−min)/2` is retained as the dominant pattern.
+
+### Backtesting
+
+Calibration is fit on `[start, cutoff]` and validated on `(cutoff, end]` — a
+strict temporal split, never random. Per observable it reports MAE, RMSE,
+weighted MAPE (`Σ|error| / Σ|observed|`), bias and empirical interval coverage
+against the prediction interval `x̄ ± z·s`. Expanding-window rolling backtests
+run one calibration per cutoff.
+
+### Credibility score
+
+`score = 100 · Σ wᵢ · nᵢ` over seven components `nᵢ ∈ [0,1]` with fixed weights:
+data quality `0.20`, temporal coverage `0.15`, backtest error `0.20`, interval
+coverage `0.15`, parameter stability `0.10`, assumed ratio `0.10`, recent drift
+`0.10`. Backtest error is `1 − min(1, wMAPE/τ)` with tolerance `τ = 0.30`.
+Bands: `≥80` decision_grade, `≥60` supporting, `≥40` provisional, else
+insufficient.
+
+### Optimization
+
+NSGA-II minimises the sign-adjusted objective vector under constraint
+domination: a feasible candidate dominates any infeasible one, and among
+infeasible candidates the lower total hard-constraint violation dominates.
+Crowding distance breaks ties. SBX crossover (`η=15`) and polynomial mutation
+(`η=20`) drive a seeded PCG64 generator, and an evaluation cache keyed by the
+rounded genome respects the compute budget. The run is reproducible for a given
+seed.
+
+### Monitoring and drift
+
+Per KPI, the adverse deviation is standardised by the predicted half-width. The
+alert level escalates `within_expectation → early_warning → material_deviation
+→ decision_review_required` at `0`, `1.5` and `3.0` adverse half-widths; a
+breached hard constraint forces a review. Drift is the maximum of result drift
+(mean standardised adverse deviation / 3), parameter drift (`|Δ|/0.5`) and data
+drift; recalibration is recommended at severity `≥ 0.5`.
+
+### CSV ingestion
+
+Long-format CSV (`period_date, series, entity_id, value, unit`) is validated
+row by row against the canonical series registry. Export neutralises leading
+formula characters (`= + - @`) so a downloaded dataset cannot execute in a
+spreadsheet.

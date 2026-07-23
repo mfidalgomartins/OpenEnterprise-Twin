@@ -10,7 +10,8 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response, Security, status
+from fastapi import APIRouter, Depends, Query, Request, Response, Security, status
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from openenterprise_twin.analytics.adaptive import (
@@ -27,6 +28,10 @@ from openenterprise_twin.analytics.history import (
     HistoricalObservation,
     SourceKind,
     build_dataset,
+)
+from openenterprise_twin.analytics.ingestion import (
+    dataset_to_csv,
+    observations_from_csv,
 )
 from openenterprise_twin.analytics.monitoring import (
     MetricPrediction,
@@ -163,6 +168,78 @@ def ingest_synthetic_dataset(
     return DatasetIngestResponse(
         dataset=_dataset_summary(stored),
         quality=stored.quality,
+    )
+
+
+@decision_loop_router.post(
+    "/datasets/csv",
+    response_model=DatasetIngestResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def ingest_dataset_csv(
+    request: Request,
+    response: Response,
+    services: ServicesDependency,
+    dataset_id: Annotated[str, Query(min_length=1, max_length=128)],
+    company_id: Annotated[str, Query(min_length=1, max_length=128)],
+    source_reference: Annotated[
+        str, Query(min_length=1, max_length=256)
+    ] = "csv-upload",
+) -> DatasetIngestResponse:
+    """Ingest a long-format CSV body (``text/csv``) of canonical observations."""
+
+    raw = await request.body()
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ApiProblemError(
+            status=422,
+            code="invalid_encoding",
+            title="CSV must be UTF-8 encoded",
+            detail="The uploaded CSV could not be decoded as UTF-8.",
+        ) from error
+    observations = observations_from_csv(content)
+    dataset = build_dataset(
+        dataset_id=dataset_id,
+        company_id=company_id,
+        observations=observations,
+        source_kind="csv",
+        source_reference=source_reference,
+    )
+    stored = _ingest(services, dataset)
+    response.headers["Location"] = f"/api/v1/datasets/{stored.dataset_id}"
+    return DatasetIngestResponse(
+        dataset=_dataset_summary(stored),
+        quality=stored.quality,
+    )
+
+
+@decision_loop_router.get(
+    "/datasets/{dataset_id}/export.csv",
+    response_class=PlainTextResponse,
+)
+def export_dataset_csv(
+    dataset_id: str,
+    services: ServicesDependency,
+) -> PlainTextResponse:
+    """Export a dataset as formula-neutralised CSV, safe to open in a sheet."""
+
+    dataset = services.calibration_studio.get_dataset(dataset_id)
+    if dataset is None:
+        raise ApiProblemError(
+            status=404,
+            code="dataset_not_found",
+            title="Dataset not found",
+            detail=f"Dataset '{dataset_id}' does not exist.",
+        )
+    return PlainTextResponse(
+        content=dataset_to_csv(dataset),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{dataset_id}.csv"'
+            )
+        },
     )
 
 

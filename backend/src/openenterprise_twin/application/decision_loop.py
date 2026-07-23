@@ -155,6 +155,9 @@ class CalibrationStudioService:
         quality = assess_data_quality(dataset)
         return self._datasets.save(dataset, quality)
 
+    def get_dataset(self, dataset_id: str) -> HistoricalDataset | None:
+        return self._datasets.get(dataset_id)
+
     def calibrate(
         self,
         *,

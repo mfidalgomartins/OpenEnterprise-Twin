@@ -78,6 +78,44 @@ def test_synthetic_ingestion_respects_observation_cap(tmp_path: Path) -> None:
         assert response.json()["code"] == "dataset_too_large"
 
 
+def test_csv_ingestion_and_neutralised_export(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        csv_body = (
+            "period_date,series,entity_id,value,unit\n"
+            "2025-01-01,demand_units,standard-valve,55,units/day\n"
+            "2025-01-02,otif,,0.96,ratio\n"
+        )
+        ingest = client.post(
+            "/api/v1/datasets/csv?dataset_id=from-csv&company_id=northstar-components",
+            content=csv_body,
+            headers={"Content-Type": "text/csv"},
+        )
+        assert ingest.status_code == 201
+        assert ingest.json()["dataset"]["observation_count"] == 2
+
+        export = client.get("/api/v1/datasets/from-csv/export.csv")
+        assert export.status_code == 200
+        assert export.headers["content-type"].startswith("text/csv")
+        assert export.text.splitlines()[0] == "period_date,series,entity_id,value,unit"
+
+
+def test_csv_ingestion_rejects_unknown_series(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/api/v1/datasets/csv?dataset_id=bad&company_id=northstar-components",
+            content="period_date,series,entity_id,value,unit\n2025-01-01,nope,,1,u\n",
+            headers={"Content-Type": "text/csv"},
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "domain_validation"
+
+
+def test_csv_export_missing_dataset_is_404(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        response = client.get("/api/v1/datasets/ghost/export.csv")
+        assert response.status_code == 404
+
+
 def test_duplicate_dataset_conflicts(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         first = client.post(
