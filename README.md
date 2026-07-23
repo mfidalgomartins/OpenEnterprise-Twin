@@ -61,7 +61,7 @@ flowchart LR
     DRIFT -->|"recalibration required"| CAL
 ```
 
-- **Calibration Studio** — ingest reproducible operating history, profile its quality, estimate parameters and dominant seasonality separating *observed / estimated / assumed* provenance with confidence intervals, backtest out-of-sample, and score a transparent, decomposable **Credibility Score** (0–100). Northstar reaches ~92 (decision-grade) at a realistic ~0.11 out-of-sample wMAPE.
+- **Calibration Studio** — ingest reproducible operating history as JSON or a validated long-format CSV, profile its quality, estimate parameters and dominant seasonality separating *observed / estimated / assumed* provenance with confidence intervals, backtest out-of-sample, and score a transparent, decomposable **Credibility Score** (0–100). Datasets export to formula-neutralised CSV. Northstar reaches ~92 (decision-grade) at a realistic ~0.11 out-of-sample wMAPE.
 - **Optimization Lab** — a deterministic, constrained **NSGA-II** search over the engine surfaces the Pareto frontier of EBITDA and service level under hard and soft constraints, with robustness, lever sensitivity and convergence evidence.
 - **Adaptive Policy Builder** — a safe declarative DSL (allow-listed metrics/operators/actions, no code execution, contradiction detection) whose conditional rules respond to backlog, OTIF, demand and liquidity, compared against the static plan on identical shock tapes.
 - **Decision Ledger** — an append-only, versioned decision state machine with optimistic concurrency, separation of duties, evidence immutability after review, and tamper-evident decision packets.
