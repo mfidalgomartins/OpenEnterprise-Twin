@@ -62,7 +62,16 @@ def test_metadata_uses_lowercase_identifiers_and_portable_json() -> None:
         ScenarioRecord,
     )
 
-    assert set(Base.metadata.tables) == {"experiments", "scenarios"}
+    assert set(Base.metadata.tables) == {
+        "experiments",
+        "scenarios",
+        "decisions",
+        "decision_events",
+        "historical_datasets",
+        "calibrations",
+        "optimizations",
+        "monitoring_reports",
+    }
     assert all(
         identifier == identifier.lower()
         for table in Base.metadata.tables.values()

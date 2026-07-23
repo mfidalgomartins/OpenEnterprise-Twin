@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openenterprise-twin"
-version = "0.2.0"
+version = "0.3.0"
 description = "Reproducible enterprise simulation for decision intelligence."
 readme = {text = "OpenEnterprise Twin domain package.", content-type = "text/markdown"}
 requires-python = ">=3.12,<3.13"
@@ -75,6 +75,7 @@ type = "forbidden"
 source_modules = [
     "openenterprise_twin.domain",
     "openenterprise_twin.simulation",
+    "openenterprise_twin.analytics",
 ]
 forbidden_modules = [
     "openenterprise_twin.api",

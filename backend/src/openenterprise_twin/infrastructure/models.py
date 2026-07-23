@@ -246,3 +246,221 @@ class ExperimentRecord(Base):
         onupdate=utc_now,
         server_default=func.now(),
     )
+
+
+_DECISION_STATES = (
+    "draft",
+    "evidence_ready",
+    "under_review",
+    "approved",
+    "implemented",
+    "monitoring",
+    "successful",
+    "underperformed",
+    "superseded",
+    "abandoned",
+)
+_DECISION_STATE_SQL = ", ".join(f"'{state}'" for state in _DECISION_STATES)
+
+
+class DecisionLedgerRecord(Base):
+    """Current, version-controlled snapshot of one governed decision."""
+
+    __tablename__ = "decisions"
+    __table_args__ = (
+        CheckConstraint(
+            f"state IN ({_DECISION_STATE_SQL})",
+            name="state",
+        ),
+        CheckConstraint("version >= 1", name="version_positive"),
+        Index("ix_decisions_state", "state"),
+        Index("ix_decisions_updated_at", "updated_at", "decision_id"),
+    )
+
+    decision_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    owner: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="draft",
+        server_default=text("'draft'"),
+    )
+    version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default=text("1"),
+    )
+    content: Mapped[JsonObject] = mapped_column(_json_type(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.now(),
+    )
+
+
+class DecisionEventRecord(Base):
+    """Append-only audit event for a decision transition, revision or approval."""
+
+    __tablename__ = "decision_events"
+    __table_args__ = (
+        CheckConstraint(
+            f"to_state IN ({_DECISION_STATE_SQL})",
+            name="to_state",
+        ),
+        CheckConstraint(
+            f"from_state IS NULL OR from_state IN ({_DECISION_STATE_SQL})",
+            name="from_state",
+        ),
+        CheckConstraint("sequence >= 1", name="sequence_positive"),
+        UniqueConstraint(
+            "decision_id",
+            "sequence",
+            name="uq_decision_events_decision_id",
+        ),
+        Index("ix_decision_events_decision_id", "decision_id", "sequence"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        _identity_type(),
+        Identity(always=True),
+        primary_key=True,
+    )
+    decision_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("decisions.decision_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    from_state: Mapped[str | None] = mapped_column(Text, nullable=True)
+    to_state: Mapped[str] = mapped_column(Text, nullable=False)
+    actor: Mapped[str] = mapped_column(Text, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    approval: Mapped[JsonObject | None] = mapped_column(_json_type(), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+
+
+class HistoricalDatasetRecord(Base):
+    """An ingested historical dataset with its data-quality profile."""
+
+    __tablename__ = "historical_datasets"
+    __table_args__ = (
+        Index("ix_historical_datasets_company_id", "company_id"),
+    )
+
+    dataset_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    company_id: Mapped[str] = mapped_column(Text, nullable=False)
+    data_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    observation_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    payload: Mapped[JsonObject] = mapped_column(_json_type(), nullable=False)
+    quality: Mapped[JsonObject] = mapped_column(_json_type(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+
+
+class CalibrationRecord(Base):
+    """A calibration of a twin with its credibility score and backtests."""
+
+    __tablename__ = "calibrations"
+    __table_args__ = (
+        Index("ix_calibrations_dataset_id", "dataset_id"),
+        Index("ix_calibrations_created_at", "created_at", "calibration_id"),
+    )
+
+    calibration_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    dataset_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("historical_datasets.dataset_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    company_model_version: Mapped[str] = mapped_column(Text, nullable=False)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    calibration: Mapped[JsonObject] = mapped_column(_json_type(), nullable=False)
+    credibility: Mapped[JsonObject] = mapped_column(_json_type(), nullable=False)
+    backtests: Mapped[JsonObject] = mapped_column(_json_type(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+
+
+class OptimizationRecord(Base):
+    """A completed policy-optimization run and its Pareto result."""
+
+    __tablename__ = "optimizations"
+    __table_args__ = (
+        Index("ix_optimizations_created_at", "created_at", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        _identity_type(),
+        Identity(always=True),
+        primary_key=True,
+    )
+    company_model_version: Mapped[str] = mapped_column(Text, nullable=False)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    evaluations: Mapped[int] = mapped_column(Integer, nullable=False)
+    config: Mapped[JsonObject] = mapped_column(_json_type(), nullable=False)
+    result: Mapped[JsonObject] = mapped_column(_json_type(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+
+
+class MonitoringReportRecord(Base):
+    """A monitoring report reconciling realised outcomes for a decision."""
+
+    __tablename__ = "monitoring_reports"
+    __table_args__ = (
+        CheckConstraint(
+            "recommended_level IN ("
+            "'within_expectation', 'early_warning', 'material_deviation', "
+            "'recalibration_required', 'decision_review_required')",
+            name="recommended_level",
+        ),
+        Index("ix_monitoring_reports_decision_id", "decision_id", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        _identity_type(),
+        Identity(always=True),
+        primary_key=True,
+    )
+    decision_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("decisions.decision_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    recommended_level: Mapped[str] = mapped_column(Text, nullable=False)
+    report: Mapped[JsonObject] = mapped_column(_json_type(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
