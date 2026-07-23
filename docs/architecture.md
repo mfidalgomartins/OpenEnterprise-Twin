@@ -112,3 +112,37 @@ The plugin registry supports demand, operations, finance, risk metric, optimizat
 - API-key authentication is single-tenant; OIDC, role authorization, tenancy and approval separation are not implemented.
 - Readiness is not yet separated from the `/health` liveness endpoint.
 - Cross-origin development requires a constrained CORS allowlist; production should prefer the supplied same-origin frontend proxy.
+
+## Governed decision loop (v0.3)
+
+v0.3 adds a pure `analytics` layer alongside `domain` and `simulation`, held to the same import contract: it never imports delivery infrastructure. It turns operating history into an operational decision system.
+
+```mermaid
+flowchart TD
+    subgraph analytics["analytics (pure)"]
+        HIST["history + quality"]
+        CALIB["calibration + seasonality"]
+        BACK["temporal backtesting"]
+        CRED["credibility score"]
+        OPT["NSGA-II optimizer"]
+        ADAPT["adaptive DSL + controller"]
+        MON["outcome monitoring + drift"]
+    end
+    HIST --> CALIB --> BACK --> CRED
+    CALIB --> OPT
+    OPT -->|evaluator port| ENGINE["simulation engine"]
+    ADAPT -->|paired| ENGINE
+    LEDGER["domain.ledger state machine"] --> APPSVC["application decision-loop + ledger services"]
+    APPSVC -->|ports| REPO["infrastructure repositories"]
+    MON --> APPSVC
+```
+
+- **Determinism & provenance.** Every analytics artifact — datasets, calibrations, credibility scores, backtests, optimizations, adaptive evaluations, decision packets and monitoring reports — is content-addressed with a SHA-256 digest over its canonical JSON, and every stochastic step is seeded.
+- **Calibration.** Parameters are tagged `observed`, `estimated` or `assumed`; confidence intervals use the normal approximation of the sampling error of the mean; the dominant weekly-vs-yearly seasonality is selected by amplitude. Backtesting always splits on time, never at random.
+- **Credibility Score.** A documented weighted mean of seven components (data quality, temporal coverage, backtest error, interval coverage, parameter stability, assumed ratio, recent drift) on a 0–100 scale with explicit interpretation bands.
+- **Optimizer.** NSGA-II with constraint-domination and crowding distance over a pluggable `CandidateEvaluator`; production wraps the deterministic experiment engine, an evaluation cache respects the compute budget, and results expose the frontier, robustness, sensitivity and convergence evidence.
+- **Adaptive DSL.** A closed language — allow-listed metrics, operators and actions, bounded magnitudes, no expression evaluation — validated for contradictions; the controller is deterministic and fully audited.
+- **Decision ledger.** The state machine and tamper-evident packet live in `domain.ledger`; the application service enforces optimistic concurrency, separation of duties and evidence immutability; an append-only event table backs a versioned snapshot.
+- **Monitoring.** Realised outcomes are reconciled against the decision's prediction with a documented, explainable alert ladder; drift is decomposed across data, parameters and results with a recalibration threshold.
+
+Persistence adds four portable SQLite/PostgreSQL tables (`historical_datasets`, `calibrations`, `optimizations`, `monitoring_reports`) plus the ledger tables, through reversible Alembic migrations `0002` and `0003`. Long-running analytics (optimization, adaptive comparison) run synchronously under strict server-side budgets so requests stay responsive; a durable async job runner remains a deployment extension.
