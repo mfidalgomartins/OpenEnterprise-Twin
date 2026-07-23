@@ -1,6 +1,14 @@
 import { Route, Routes } from "react-router-dom";
 
 import {
+  AdaptivePolicyPage,
+  CalibrationStudioPage,
+  DecisionLedgerPage,
+  MonitoringCenterPage,
+  OptimizationLabPage,
+} from "../features/autopilot/AutopilotPages";
+import "../features/autopilot/autopilot.css";
+import {
   BriefingPage,
   DecisionsPage,
   NotFoundPage,
@@ -27,6 +35,11 @@ export function AppRoutes() {
           element={<ScenarioComparePage />}
         />
         <Route path="decisions" element={<DecisionsPage />} />
+        <Route path="calibration" element={<CalibrationStudioPage />} />
+        <Route path="optimization" element={<OptimizationLabPage />} />
+        <Route path="adaptive" element={<AdaptivePolicyPage />} />
+        <Route path="ledger" element={<DecisionLedgerPage />} />
+        <Route path="monitoring" element={<MonitoringCenterPage />} />
         <Route
           path="reports/:experimentId"
           element={<ExecutiveReportPage />}

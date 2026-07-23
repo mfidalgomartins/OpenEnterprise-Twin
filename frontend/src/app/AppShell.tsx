@@ -9,6 +9,11 @@ const destinations = [
   { label: "Briefing", to: "/" },
   { label: "Twin", to: "/twin" },
   { label: "Scenarios", to: "/scenarios" },
+  { label: "Calibration", to: "/calibration" },
+  { label: "Optimization", to: "/optimization" },
+  { label: "Adaptive", to: "/adaptive" },
+  { label: "Ledger", to: "/ledger" },
+  { label: "Monitoring", to: "/monitoring" },
   { label: "Decisions", to: "/decisions" },
   { label: "Reports", to: "/reports" },
 ] as const;
@@ -68,6 +73,11 @@ export function AppShell({ children }: PropsWithChildren) {
       "/reports": "Decision briefs",
       "/scenarios": "Policy studio",
       "/twin": "Company twin",
+      "/calibration": "Calibration studio",
+      "/optimization": "Optimization lab",
+      "/adaptive": "Adaptive policy builder",
+      "/ledger": "Decision ledger",
+      "/monitoring": "Monitoring center",
     };
     const title =
       titleByPath[location.pathname] ??
