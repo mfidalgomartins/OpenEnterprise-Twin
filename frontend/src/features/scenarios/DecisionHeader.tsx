@@ -20,7 +20,11 @@ export function DecisionHeader({ comparison, report }: DecisionHeaderProps) {
     <header className="decision-header">
       <div className="decision-header__title-row">
         <h1>{comparison.candidate_scenario_name}</h1>
-        <p className="decision-header__state">Evidence ready for review</p>
+        <p className="decision-header__state">
+          {report.evidence_quality.grade === "decision_grade"
+            ? `Decision-grade · ${report.evidence_quality.actual_replications} paired runs`
+            : `Exploratory · ${report.evidence_quality.actual_replications} of ${report.evidence_quality.minimum_replications} required`}
+        </p>
       </div>
       <p className="decision-header__metadata">
         <span>Baseline: {comparison.baseline_scenario_name}</span>

@@ -15,5 +15,6 @@ node_modules/
 frontend/dist/
 playwright-report/
 test-results/
+.playwright-cli/
 artifacts/
 skill-observations/

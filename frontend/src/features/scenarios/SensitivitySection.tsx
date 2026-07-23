@@ -33,9 +33,9 @@ export function SensitivitySection({ metrics }: SensitivitySectionProps) {
   );
 
   return (
-    <section aria-labelledby="sensitivities-title" className="decision-chapter">
+    <section aria-labelledby="uncertainty-title" className="decision-chapter">
       <div className="decision-chapter__heading">
-        <h2 id="sensitivities-title">Sensitivities</h2>
+        <h2 id="uncertainty-title">Outcome uncertainty</h2>
         <p>
           Financial outcome ranges are ranked by P5–P95 spread. They describe
           simulation uncertainty, not unmeasured driver elasticity.
@@ -83,6 +83,7 @@ export function SensitivitySection({ metrics }: SensitivitySectionProps) {
                   )
                 }
                 className="sensitivity-list__track"
+                role="img"
               >
                 <span className="sensitivity-list__zero" />
                 <span

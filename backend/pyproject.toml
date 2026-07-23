@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openenterprise-twin"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reproducible enterprise simulation for decision intelligence."
 readme = {text = "OpenEnterprise Twin domain package.", content-type = "text/markdown"}
 requires-python = ">=3.12,<3.13"
@@ -13,6 +13,8 @@ authors = [{name = "OpenEnterprise Twin contributors"}]
 dependencies = [
     "alembic>=1.14,<2",
     "fastapi>=0.115,<1",
+    "greenlet>=3.1,<4",
+    "httpx>=0.28,<1",
     "numpy>=2.2,<3",
     "pydantic>=2.10,<3",
     "pydantic-settings>=2.7,<3",
@@ -23,10 +25,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "httpx>=0.28,<1",
+    "httpx2>=2.7,<3",
     "import-linter>=2.3,<3",
     "mypy>=1.15,<2",
-    "pytest>=8.3,<9",
+    "pytest>=9.0.3,<10",
     "ruff>=0.9,<1",
 ]
 

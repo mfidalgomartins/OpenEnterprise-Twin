@@ -188,7 +188,7 @@ a {
 
 .model-context__item dt {
   color: var(--color-muted);
-  font-size: 0.6875rem;
+  font-size: var(--text-meta);
 }
 
 .model-context__item dd {
@@ -200,6 +200,11 @@ a {
   width: min(100%, var(--content-maximum));
   margin-inline: auto;
   padding-inline: var(--space-6);
+}
+
+.app-main:focus {
+  outline: 0.1875rem solid var(--color-comparison);
+  outline-offset: 0.1875rem;
 }
 
 .route-intro {
@@ -314,7 +319,7 @@ a {
     width: 100%;
     justify-content: center;
     padding-inline: 0.125rem;
-    font-size: clamp(0.6875rem, 3vw, 0.75rem);
+    font-size: var(--text-meta);
   }
 
   .primary-nav__link::after {
@@ -333,7 +338,7 @@ a {
   .model-context__company {
     min-width: 0;
     padding: var(--space-2);
-    font-size: 0.6875rem;
+    font-size: var(--text-meta);
     line-height: 1.2;
     white-space: normal;
   }
@@ -388,6 +393,11 @@ a {
   }
 
   .model-context__item:nth-child(even) {
+    border-inline-end: 0;
+  }
+
+  .model-context__item:last-child {
+    grid-column: 1 / -1;
     border-inline-end: 0;
   }
 

@@ -57,8 +57,13 @@
   font-size: var(--text-ui);
 }
 
-.executive-report__toolbar button {
+.executive-report__toolbar button,
+.executive-report__actions a,
+.executive-report-state button {
+  display: inline-flex;
   min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
   padding-inline: var(--space-4);
   border: 0.0625rem solid var(--color-ink);
   border-radius: var(--radius-control);
@@ -67,6 +72,20 @@
   cursor: pointer;
   font-size: var(--text-ui);
   font-weight: 650;
+  text-decoration: none;
+}
+
+.executive-report__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: var(--space-2) !important;
+}
+
+.executive-report__actions a {
+  border-color: var(--color-line);
+  background: var(--color-canvas);
+  color: var(--color-ink);
 }
 
 .executive-report__cover {
@@ -201,6 +220,11 @@
   color: var(--color-risk);
 }
 
+.report-decision--conditional {
+  background: color-mix(in oklch, var(--color-warning) 13%, white);
+  color: color-mix(in oklch, var(--color-warning) 78%, black);
+}
+
 .report-recommendation h3 {
   margin: 0;
   font-size: clamp(1.8rem, 4vw, 3.75rem);
@@ -245,7 +269,10 @@
 .report-scenario-pair > span {
   align-self: center;
   color: var(--color-decision);
-  font-size: 2rem;
+  font-size: var(--text-meta);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .report-scenario-pair p,
@@ -551,7 +578,6 @@
 
   .report-scenario-pair > span {
     justify-self: center;
-    transform: rotate(90deg);
   }
 
   .report-callout li,

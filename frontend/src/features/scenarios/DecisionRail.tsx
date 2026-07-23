@@ -1,14 +1,8 @@
 import { Link } from "react-router-dom";
 
 import { formatDate, formatPercent } from "../../lib/format";
-import { metricLabels } from "./formatScenario";
+import { formatDecisionStatus, metricLabels } from "./formatScenario";
 import type { ExecutiveBrief } from "./types";
-
-const decisionLabels = {
-  adopt: "Adopt",
-  conditional: "Adopt with guardrails",
-  do_not_adopt: "Do not adopt",
-} as const;
 
 interface DecisionRailProps {
   experimentId: string;
@@ -26,7 +20,10 @@ export function DecisionRail({ experimentId, report }: DecisionRailProps) {
             report.decision_status
           }
         >
-          {decisionLabels[report.decision_status]}
+          {formatDecisionStatus(
+            report.decision_status,
+            report.evidence_quality.grade,
+          )}
         </p>
         <p>{report.recommendation.headline}</p>
       </section>
@@ -54,7 +51,7 @@ export function DecisionRail({ experimentId, report }: DecisionRailProps) {
       </section>
 
       <section className="decision-rail__section">
-        <h3>Binding constraints</h3>
+        <h3>Constraints and watches</h3>
         {report.constraints.length > 0 ? (
           <ul className="decision-rail__list">
             {report.constraints.map((constraint) => (

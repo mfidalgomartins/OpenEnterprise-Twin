@@ -1,6 +1,6 @@
 # Architecture
 
-OpenEnterprise Twin 0.1 is a monorepo with a React client and a modular Python monolith. PostgreSQL stores transactional lifecycle state; large immutable experiment results live in a content-addressed artifact store. The architecture optimizes for explainability and replaceable boundaries before distributed scale.
+OpenEnterprise Twin 0.2 is a monorepo with a React client and a modular Python monolith. PostgreSQL stores transactional lifecycle state; large immutable experiment results live in a content-addressed artifact store. The architecture optimizes for explainability, governed decisions and replaceable boundaries before distributed scale.
 
 ## System context
 
@@ -79,9 +79,13 @@ The implemented public resources are:
 - `GET /api/v1/experiments/{experiment_id}`
 - `GET /api/v1/experiments/{experiment_id}/comparison`
 - `GET /api/v1/experiments/{experiment_id}/report`
+- `GET /api/v1/decisions`
+- `GET /api/v1/frontier`
 - `GET /health` for process liveness
 
-Errors use `application/problem+json` with stable `code`, `detail`, `trace_id` and field violations. `Idempotency-Key` prevents duplicate experiment creation and returns a conflict if reused for different inputs. A candidate experiment requires a completed baseline with the same seed and replication count.
+Scenario and decision collections are bounded and cursor-aware. Errors use `application/problem+json` with stable `code`, `detail`, `trace_id` and field violations. `Idempotency-Key` prevents duplicate experiment creation and returns a conflict if reused for different inputs. A candidate experiment requires a completed baseline with the same seed and replication count.
+
+Production mode requires `X-API-Key` on every business resource, disables interactive OpenAPI surfaces, validates host headers and enforces request-size and simulation-period budgets. The supplied Nginx proxy injects the key server-side so browser code never persists it. Mutating requests emit payload-free audit events with principal, route, status and trace ID.
 
 ## Reproducibility boundary
 
@@ -93,18 +97,18 @@ Experiment, comparison and brief objects each add canonical content digests and 
 
 `make dev` owns the local order: install dependencies, start healthy PostgreSQL, migrate, seed the baseline, then start API and Vite. `make demo` is intentionally an API client; it does not bypass public scenario and experiment contracts.
 
-The backend Dockerfile uses a Python 3.12 multi-stage build, copies only the installed environment plus migration assets, runs as UID/GID `10001`, writes artifacts to `/app/artifacts` and exposes a liveness health check. The frontend image builds the typed React bundle and serves it through Nginx on port `8080`; `/api/` is proxied to the configurable `API_UPSTREAM`, keeping browser traffic same-origin. Database migrations remain an explicit deployment step before application rollout. Secrets and the production database URL are injected at runtime.
+The backend Dockerfile uses a Python 3.12 multi-stage build, copies only the installed environment plus migration assets, runs as UID/GID `10001`, writes artifacts to `/app/artifacts` and exposes a liveness health check. The frontend image builds the typed React bundle and serves it through Nginx on port `8080`; `/api/` is proxied to the configurable `API_UPSTREAM`, keeping browser traffic same-origin. Nginx applies CSP, framing, MIME, referrer and browser-permission controls. Database migrations remain an explicit deployment step before application rollout. Secrets and the production database URL are injected at runtime.
 
 ## Extension boundary
 
 The plugin registry supports demand, operations, finance, risk metric, optimization and report-section capabilities. Manifests declare SemVer identity, inclusive engine compatibility and scalar configuration fields. Runtime adapters revalidate inputs and outputs at each call. Plugins receive immutable typed evidence—not database sessions, request objects or mutable engine state.
 
-0.1 uses explicit registration. Entry-point discovery, process isolation and a stable external SDK are later release concerns.
+0.2 uses explicit registration. Entry-point discovery, process isolation and a stable external SDK are later release concerns.
 
 ## Known architectural gaps
 
 - In-process execution cannot provide horizontal worker failover.
 - The filesystem artifact adapter is single-node unless mounted on shared durable storage.
-- Authentication, authorization, tenancy and audit approvals are outside 0.1.
+- API-key authentication is single-tenant; OIDC, role authorization, tenancy and approval separation are not implemented.
 - Readiness is not yet separated from the `/health` liveness endpoint.
 - Cross-origin development requires a constrained CORS allowlist; production should prefer the supplied same-origin frontend proxy.

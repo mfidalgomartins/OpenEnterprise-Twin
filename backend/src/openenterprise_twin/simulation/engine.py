@@ -46,7 +46,7 @@ from openenterprise_twin.simulation.shocks import (
 )
 
 START_DATE = date(2025, 1, 1)
-ENGINE_VERSION = "0.1.0"
+ENGINE_VERSION = "0.2.0"
 
 
 @dataclass(slots=True)
@@ -82,6 +82,7 @@ class _PurchaseOrder:
     due_day: int
     quantity: int
     unit_cost_milli_cents: int
+    origin_phase: Phase
 
 
 def simulate_trace(
@@ -114,8 +115,8 @@ def simulate_trace(
     orders: list[_Order] = []
     work_orders: list[_WorkOrder] = []
     purchase_orders: list[_PurchaseOrder] = []
-    receivables: dict[int, int] = {}
-    payables: dict[int, int] = {}
+    receivables: dict[int, dict[Phase, int]] = {}
+    payables: dict[int, dict[Phase, int]] = {}
     cash_cents = company.financial_policy.opening_cash_cents
     debt_cents = 0
     next_order_id = 1
@@ -167,7 +168,12 @@ def simulate_trace(
             invoice = (
                 purchase_order.quantity * purchase_order.unit_cost_milli_cents
             ) // 1000
-            payables[due_day] = payables.get(due_day, 0) + invoice
+            _schedule_cash_flow(
+                payables,
+                due_day=due_day,
+                origin_phase=purchase_order.origin_phase,
+                amount_cents=invoice,
+            )
 
         work_orders, completed_starts, completed_good = _complete_work_orders(
             work_orders, day_index, shock.yield_rate_by_product
@@ -178,8 +184,14 @@ def simulate_trace(
             good_production[product_id] += units
             production_scrap[product_id] = completed_starts[product_id] - units
 
-        collections_cents = receivables.pop(day_index, 0)
-        supplier_payments_cents = payables.pop(day_index, 0)
+        (
+            collections_cents,
+            evaluation_origin_collections_cents,
+        ) = _pop_scheduled_cash_flow(receivables, day_index)
+        (
+            supplier_payments_cents,
+            evaluation_origin_supplier_payments_cents,
+        ) = _pop_scheduled_cash_flow(payables, day_index)
         obligation_financing = apply_financing(
             cash_before_financing_cents=(
                 cash_cents + collections_cents - supplier_payments_cents
@@ -211,6 +223,7 @@ def simulate_trace(
             finished_goods=finished_goods,
             shipments=shipments,
             products=products,
+            materials=materials,
             segments=segments,
             scenario=scenario,
             day_index=day_index,
@@ -283,6 +296,13 @@ def simulate_trace(
             minutes * resources[resource_id].overtime_cost_cents_per_minute
             for resource_id, minutes in production_plan.overtime_used.items()
         )
+        production_scrap_cost_cents = sum(
+            units
+            * _effective_unit_cost_cents(
+                products[product_id], materials, scenario
+            )
+            for product_id, units in production_scrap.items()
+        )
 
         purchase_orders.extend(
             _place_purchase_orders(
@@ -296,6 +316,18 @@ def simulate_trace(
         )
 
         fixed_cost_cents = company.financial_policy.monthly_fixed_cost_cents * 12 // 365
+        commercial_investment_change_cents = _commercial_investment_change_cents(
+            company,
+            scenario,
+            is_operating_day=is_operating_day,
+            phase=phase,
+        )
+        capacity_commitment_change_cents = _capacity_commitment_change_cents(
+            company,
+            scenario,
+            is_operating_day=is_operating_day,
+            phase=phase,
+        )
         interest_paid_cents = _daily_interest_cents(
             debt_cents, company.financial_policy.annual_interest_rate
         )
@@ -308,6 +340,8 @@ def simulate_trace(
             cash_cents
             - conversion_cost_cents
             - overtime_cost_cents
+            - commercial_investment_change_cents
+            - capacity_commitment_change_cents
             - fixed_cost_cents
             - interest_paid_cents
             - capital_investment_cents
@@ -382,9 +416,28 @@ def simulate_trace(
             overtime_used_minutes=production_plan.overtime_used,
             opening_cash_cents=opening_cash,
             collections_cents=collections_cents,
+            evaluation_origin_collections_cents=(
+                evaluation_origin_collections_cents
+            ),
             supplier_payments_cents=supplier_payments_cents,
+            evaluation_origin_supplier_payments_cents=(
+                evaluation_origin_supplier_payments_cents
+            ),
+            closing_evaluation_receivables_cents=(
+                _scheduled_phase_balance(receivables, "evaluation")
+            ),
+            closing_evaluation_payables_cents=(
+                _scheduled_phase_balance(payables, "evaluation")
+            ),
             conversion_cost_cents=conversion_cost_cents,
             overtime_cost_cents=overtime_cost_cents,
+            commercial_investment_change_cents=(
+                commercial_investment_change_cents
+            ),
+            capacity_commitment_change_cents=(
+                capacity_commitment_change_cents
+            ),
+            production_scrap_cost_cents=production_scrap_cost_cents,
             fixed_cost_cents=fixed_cost_cents,
             interest_paid_cents=interest_paid_cents,
             capital_investment_cents=capital_investment_cents,
@@ -577,10 +630,11 @@ def _ship_orders(
     finished_goods: dict[str, int],
     shipments: dict[str, int],
     products: dict[str, Product],
+    materials: dict[str, MaterialPolicy],
     segments: dict[str, CustomerSegment],
     scenario: Scenario,
     day_index: int,
-    receivables: dict[int, int],
+    receivables: dict[int, dict[Phase, int]],
     shock: DailyShock,
     fulfilled_orders_count: dict[str, int],
     otif_orders_count: dict[str, int],
@@ -609,7 +663,9 @@ def _ship_orders(
         shipments[order.product_id] += shipped
         invoice = shipped * order.unit_price_cents
         revenue += invoice
-        cogs += shipped * products[order.product_id].standard_unit_cost_cents
+        cogs += shipped * _effective_unit_cost_cents(
+            products[order.product_id], materials, scenario
+        )
         segment = segments[order.segment_id]
         due_day = (
             day_index
@@ -621,7 +677,12 @@ def _ship_orders(
         )
         # Same-day collections have already run in the fixed chronology.
         due_day = max(day_index + 1, due_day)
-        receivables[due_day] = receivables.get(due_day, 0) + invoice
+        _schedule_cash_flow(
+            receivables,
+            due_day=due_day,
+            origin_phase=order.origin_phase,
+            amount_cents=invoice,
+        )
         eligible_orders = order.order_count - order.cancelled_order_count
         order.fulfilled_order_count = min(
             eligible_orders, order.shipped_units // order.unit_size
@@ -768,6 +829,7 @@ def _place_purchase_orders(
                 + shock_delays[material.material_id],
                 quantity=quantity,
                 unit_cost_milli_cents=unit_cost,
+                origin_phase=scenario.phase_for_day(day_index),
             )
         )
     return created
@@ -783,6 +845,114 @@ def _conversion_cost_per_start(
             requirement.base_units_per_unit * material.unit_cost_milli_cents // 1000
         )
     return max(0, product.standard_unit_cost_cents - material_cost)
+
+
+def _schedule_cash_flow(
+    schedule: dict[int, dict[Phase, int]],
+    *,
+    due_day: int,
+    origin_phase: Phase,
+    amount_cents: int,
+) -> None:
+    by_phase = schedule.setdefault(due_day, {})
+    by_phase[origin_phase] = by_phase.get(origin_phase, 0) + amount_cents
+
+
+def _pop_scheduled_cash_flow(
+    schedule: dict[int, dict[Phase, int]],
+    due_day: int,
+) -> tuple[int, int]:
+    by_phase = schedule.pop(due_day, {})
+    return sum(by_phase.values()), by_phase.get("evaluation", 0)
+
+
+def _scheduled_phase_balance(
+    schedule: dict[int, dict[Phase, int]], phase: Phase
+) -> int:
+    return sum(by_phase.get(phase, 0) for by_phase in schedule.values())
+
+
+def _effective_unit_cost_cents(
+    product: Product,
+    materials: dict[str, MaterialPolicy],
+    scenario: Scenario,
+) -> int:
+    """Resolve purchase-price variance into product cost without hiding it in cash."""
+
+    changes = {
+        change.material_id: change
+        for change in scenario.policy_levers.material_changes
+    }
+    baseline_material_cost = 0
+    effective_material_cost = 0
+    for requirement in product.material_requirements:
+        material = materials[requirement.material_id]
+        baseline_component = (
+            requirement.base_units_per_unit * material.unit_cost_milli_cents // 1000
+        )
+        change = changes.get(requirement.material_id)
+        cost_factor = (
+            Decimal("1") + change.supplier_unit_cost_change
+            if change is not None
+            else Decimal("1")
+        )
+        effective_milli_cents = int(
+            (Decimal(material.unit_cost_milli_cents) * cost_factor)
+            .to_integral_value(rounding=ROUND_HALF_UP)
+        )
+        effective_component = (
+            requirement.base_units_per_unit * effective_milli_cents // 1000
+        )
+        baseline_material_cost += baseline_component
+        effective_material_cost += effective_component
+    conversion_cost = max(
+        0, product.standard_unit_cost_cents - baseline_material_cost
+    )
+    return conversion_cost + effective_material_cost
+
+
+def _commercial_investment_change_cents(
+    company: CompanyModel,
+    scenario: Scenario,
+    *,
+    is_operating_day: bool,
+    phase: Phase,
+) -> int:
+    if not is_operating_day or phase != "evaluation":
+        return 0
+    change = scenario.policy_levers.commercial_investment_change
+    return int(
+        (
+            Decimal(company.financial_policy.daily_commercial_investment_cents)
+            * change
+        ).to_integral_value(rounding=ROUND_HALF_UP)
+    )
+
+
+def _capacity_commitment_change_cents(
+    company: CompanyModel,
+    scenario: Scenario,
+    *,
+    is_operating_day: bool,
+    phase: Phase,
+) -> int:
+    if not is_operating_day or phase != "evaluation":
+        return 0
+    changes = {
+        change.resource_id: change
+        for change in scenario.policy_levers.resource_changes
+    }
+    total = Decimal("0")
+    for resource in company.plant.resources:
+        change = changes.get(resource.resource_id)
+        if change is None:
+            continue
+        total += (
+            Decimal(resource.daily_capacity_minutes)
+            * change.regular_capacity_change
+            * Decimal(resource.capacity_cost_cents_per_minute)
+        )
+    return int(total.to_integral_value(rounding=ROUND_HALF_UP))
 
 
 def _backlog_by_product(

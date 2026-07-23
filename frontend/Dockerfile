@@ -10,10 +10,13 @@ RUN npm run build
 FROM nginx:1.27-alpine AS runtime
 
 ENV API_UPSTREAM=http://api:8000 \
-    NGINX_ENVSUBST_FILTER=^API_UPSTREAM$
+    API_KEY= \
+    NGINX_ENVSUBST_FILTER=^(API_UPSTREAM|API_KEY)$
 
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=builder /build/dist /usr/share/nginx/html
+
+RUN chown -R nginx:nginx /usr/share/nginx/html /etc/nginx/templates
 
 EXPOSE 8080
 

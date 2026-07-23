@@ -11,6 +11,7 @@ export type MetricName =
   | "rescue_funding";
 
 export type DecisionStatus = "adopt" | "conditional" | "do_not_adopt";
+export type EvidenceGrade = "exploratory" | "decision_grade";
 export type ComparisonDirection = "higher" | "lower";
 export type MechanismId =
   | "pricing"
@@ -91,6 +92,10 @@ export interface MetricComparison {
   candidate_mean: number;
   baseline_breach_probability: number;
   candidate_breach_probability: number;
+  baseline_breach_probability_ci95_lower: number;
+  baseline_breach_probability_ci95_upper: number;
+  candidate_breach_probability_ci95_lower: number;
+  candidate_breach_probability_ci95_upper: number;
   mean_difference: number;
   ci95_lower: number | null;
   ci95_upper: number | null;
@@ -217,6 +222,12 @@ export interface BriefProvenance {
 export interface ExecutiveBrief {
   brief_schema_version: string;
   decision_status: DecisionStatus;
+  evidence_quality: {
+    grade: EvidenceGrade;
+    actual_replications: number;
+    minimum_replications: number;
+    detail: string;
+  };
   recommendation: Recommendation;
   outcome_deltas: OutcomeDelta[];
   mechanisms: MechanismNarrative[];
@@ -290,4 +301,51 @@ export interface ExperimentResource {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+}
+
+export interface PortfolioMetric {
+  metric_name: MetricName;
+  baseline_mean: number;
+  candidate_mean: number;
+  mean_difference: number;
+  candidate_breach_probability: number;
+}
+
+export interface DecisionSummary {
+  experiment_id: number;
+  scenario_id: string;
+  scenario_name: string;
+  completed_at: string;
+  replication_count: number;
+  decision_status: DecisionStatus;
+  evidence_grade: EvidenceGrade;
+  headline: string;
+  hard_constraint_count: number;
+  metrics: PortfolioMetric[];
+  comparison_digest: string;
+  brief_digest: string;
+}
+
+export interface DecisionPortfolio {
+  items: DecisionSummary[];
+  next_before_id: number | null;
+}
+
+export interface FrontierPoint {
+  experiment_id: number;
+  scenario_id: string;
+  scenario_name: string;
+  decision_status: DecisionStatus;
+  ebitda_delta: number;
+  free_cash_flow_delta: number;
+  otif_delta: number;
+  comparison_digest: string;
+}
+
+export interface PolicyFrontier {
+  points: FrontierPoint[];
+  eligible_count: number;
+  dominated_count: number;
+  excluded_count: number;
+  method: "pareto_maximize_ebitda_fcf_otif";
 }

@@ -1,5 +1,7 @@
 import { useParams, useSearchParams } from "react-router-dom";
 
+import { ApiError } from "../../lib/api";
+
 import { DecisionHeader } from "./DecisionHeader";
 import { DecisionRail } from "./DecisionRail";
 import { EvidenceSection } from "./EvidenceSection";
@@ -43,7 +45,7 @@ export function ScenarioComparePage() {
   const { scenarioId = "" } = useParams();
   const [searchParams] = useSearchParams();
   const experimentId = searchParams.get("experiment")?.trim() ?? "";
-  const { comparison, error, isFetching, isPending, report } =
+  const { comparison, error, isFetching, isPending, report, retry } =
     useScenarioDecisionRoom(experimentId);
   const hasEvidence = Boolean(comparison && report);
 
@@ -72,15 +74,19 @@ export function ScenarioComparePage() {
     );
   }
 
-  if (error || !comparison || !report) {
+  if (!comparison || !report) {
+    const traceId = error instanceof ApiError ? error.traceId : "";
     return (
       <section className="decision-room-state">
         <RecalculationStatus hasEvidence={false} isFetching={false} />
         <h1>Scenario comparison unavailable</h1>
         <p role="alert">
           The comparison evidence could not be loaded. Check the experiment
-          identifier and try again.
+          identifier and try again.{traceId ? ` Trace ${traceId}.` : ""}
         </p>
+        <button className="decision-room-state__action" onClick={retry} type="button">
+          Retry evidence
+        </button>
       </section>
     );
   }
@@ -101,10 +107,19 @@ export function ScenarioComparePage() {
   return (
     <article className="decision-room">
       <RecalculationStatus hasEvidence isFetching={isFetching} />
+      {error ? (
+        <p className="decision-room__refresh-error" role="alert">
+          Evidence refresh failed; the last valid snapshot remains visible.{" "}
+          <button onClick={retry} type="button">Retry</button>
+        </p>
+      ) : null}
       <div className="decision-room__layout">
         <DecisionHeader comparison={comparison} report={report} />
         <DecisionRail experimentId={experimentId} report={report} />
-        <OutcomeSummary outcomes={report.outcome_deltas} />
+        <OutcomeSummary
+          metrics={comparison.metric_results}
+          outcomes={report.outcome_deltas}
+        />
         <div className="decision-room__evidence">
           <section
             aria-labelledby="impact-title"

@@ -1,0 +1,32 @@
+name: Capability proposal
+description: Propose a focused model, governance or product capability.
+title: "[Proposal]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: decision
+    attributes:
+      label: Decision to improve
+      description: What real decision should become faster, safer or more auditable?
+    validations:
+      required: true
+  - type: textarea
+    id: design
+    attributes:
+      label: Proposed capability
+      description: Describe the smallest useful change, inputs, outputs and expected user journey.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and acceptance criteria
+      description: State measurable acceptance criteria, model assumptions and required failure behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Boundaries and risks
+      description: Note compatibility, reproducibility, security, performance or calibration implications.

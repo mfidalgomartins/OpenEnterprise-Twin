@@ -11,7 +11,7 @@ def build_northstar_company() -> CompanyModel:
         {
             "company_id": "northstar-components",
             "name": "Northstar Components",
-            "model_version": "0.1.0",
+            "model_version": "0.2.0",
             "products": [
                 _product(
                     product_id="standard-valve",
@@ -99,12 +99,14 @@ def build_northstar_company() -> CompanyModel:
                         "daily_capacity_minutes": 3380,
                         "max_overtime_minutes": 480,
                         "overtime_cost_cents_per_minute": 71,
+                        "capacity_cost_cents_per_minute": 280,
                     },
                     {
                         "resource_id": "test",
                         "daily_capacity_minutes": 1050,
                         "max_overtime_minutes": 240,
                         "overtime_cost_cents_per_minute": 85,
+                        "capacity_cost_cents_per_minute": 360,
                     },
                 ],
                 "materials": [
@@ -135,6 +137,7 @@ def build_northstar_company() -> CompanyModel:
                 "monthly_fixed_cost_cents": 17_000_000,
                 "annual_interest_rate": "0.08",
                 "revolver_limit_cents": 50_000_000,
+                "daily_commercial_investment_cents": 2_000_000,
             },
             "decision_policy": {
                 "metric_rules": [
@@ -162,7 +165,7 @@ def build_baseline_scenario(*, horizon_days: int = 515) -> Scenario:
     return Scenario(
         scenario_id="current-plan",
         name="Current plan",
-        company_model_version="0.1.0",
+        company_model_version="0.2.0",
         schema_version="0.1.0",
         horizon_days=horizon_days,
         warmup_days=warmup_days,

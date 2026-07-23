@@ -1,6 +1,6 @@
 # OpenEnterprise Twin Design System
 
-This document translates the approved [Decision Room concept](assets/decision-room-concept.png) into implementation rules. The concept is the visual source of truth for the 0.1 scenario comparison experience.
+This document defines the implemented visual and interaction rules for the 0.2 control tower, policy studio, Decision Room and executive brief.
 
 ## Design idea
 
@@ -57,7 +57,7 @@ Text uses weights 400, 500 and 600 only. Numeric content uses tabular figures. B
 
 ### Product header
 
-The left side contains the wordmark and five destinations: Briefing, Twin, Scenarios, Decisions and Reports. The right side shows company, reporting date, currency, model version and data freshness. Navigation selection is expressed with typography and a thin green rule.
+The left side contains the wordmark and five destinations: Briefing, Twin, Scenarios, Decisions and Reports. The right side shows the loaded company, currency, model version and explicit synthetic-reference data mode. Navigation selection is expressed with typography and a thin green rule.
 
 ### Decision header
 
@@ -69,22 +69,22 @@ At most three outcomes appear inline below the decision sentence. They are not b
 
 ### Analytical chart
 
-The chart title is a conclusion. Baseline is muted blue; the selected policy is moss green; risk is rust. Series are directly labelled and limited to five. Uncertainty is shown as a P10–P90 band. Every chart has a concise text summary and an accessible exact-value table.
+Outcome evidence uses independent per-metric P10, mean and P90 rows so unlike monetary stocks and flows are never presented as one continuous path. Sensitivity ranges are ranked and retain exact values and accessible labels.
 
 ### Narrative chapters
 
-The primary chapter order is Impact, Mechanism, Sensitivities, Execution and Evidence. The mechanism uses a causal chain, sensitivities use a ranked tornado, and evidence closes with model, seed, iterations and assumption provenance.
+The primary chapter order is Impact, Mechanism, Sensitivities, Execution and Evidence. The mechanism uses an ordered causal chain, sensitivities use ranked ranges, and evidence closes with model, seed, iterations and assumption provenance.
 
 ### Decision rail
 
-The only exceptional panel contains recommendation, downside trigger, binding constraint, owner, review date and record action. It uses a 12px radius, no decorative shadow and no gradient. The recommendation is `Adopt`, `Adopt with guardrails` or `Do not adopt`.
+The only exceptional panel contains recommendation, downside trigger, binding constraint, owner, review date and record action. It uses a 12px radius, no decorative shadow and no gradient. The recommendation is `Adopt`, `Pilot only` or `Do not adopt`; exploratory evidence can never authorize adoption.
 
 ## Interaction
 
 - Recalculation retains the last valid result and announces status through `aria-live="polite"`.
 - Changed assumptions show saved time and changed-driver count.
 - Errors preserve entered values and name the failed operation with a corrective action.
-- Hover previews a scenario; click locks comparison selection.
+- Primary links and actions navigate to real routes or execute the named operation; unavailable capabilities are not presented as controls.
 - Published reports are immutable and display the complete reproducibility record.
 - State transitions run between 150 and 250ms and are disabled under reduced motion.
 
@@ -106,4 +106,4 @@ The only exceptional panel contains recommendation, downside trigger, binding co
 
 ## Visual acceptance
 
-The 0.1 release is accepted only after the latest browser capture is inspected beside the source concept at 1440×1000, with additional checks at 1024×900 and 390×844. Typography, spacing, color, chart anatomy, responsive order and interaction states must match the intent of the concept without browser overflow or unreadable labels.
+The release is accepted only after real application captures are inspected at 1440×1000, 1024×900 and 390×844. Typography, spacing, color, tables, responsive order and interaction states must have no overflow, clipping, unreadable labels or non-functional primary controls.

@@ -43,7 +43,38 @@ NonNegativeFloat = Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
 Probability = Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)]
 Digest = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
 
-_NORMAL_95_CRITICAL_VALUE = 1.959963984540054
+_STUDENT_T_95_CRITICAL_VALUES = (
+    12.706204736,
+    4.30265273,
+    3.182446305284263,
+    2.776445105,
+    2.570581836,
+    2.446911851,
+    2.364624252,
+    2.306004135,
+    2.262157163,
+    2.228138852,
+    2.20098516,
+    2.17881283,
+    2.160368656,
+    2.144786688,
+    2.131449546,
+    2.119905299,
+    2.109815578,
+    2.10092204,
+    2.093024054,
+    2.085963447,
+    2.079613845,
+    2.073873068,
+    2.06865761,
+    2.063898562,
+    2.059538553,
+    2.055529439,
+    2.051830516,
+    2.048407142,
+    2.045229642,
+    2.042272456,
+)
 _HIGHER_IS_BETTER: frozenset[MetricName] = frozenset(
     {"revenue", "ebitda", "free_cash_flow", "closing_cash", "otif"}
 )
@@ -120,6 +151,10 @@ class MetricComparison(DomainModel):
     candidate_mean: FiniteFloat
     baseline_breach_probability: Probability
     candidate_breach_probability: Probability
+    baseline_breach_probability_ci95_lower: Probability
+    baseline_breach_probability_ci95_upper: Probability
+    candidate_breach_probability_ci95_lower: Probability
+    candidate_breach_probability_ci95_upper: Probability
     mean_difference: FiniteFloat
     ci95_lower: FiniteFloat | None
     ci95_upper: FiniteFloat | None
@@ -234,6 +269,18 @@ def compare_experiments(
             ),
             candidate_breach_probability=(
                 candidate.metrics[metric_name].breach_probability
+            ),
+            baseline_breach_probability_ci95_lower=(
+                baseline.metrics[metric_name].breach_probability_ci95_lower
+            ),
+            baseline_breach_probability_ci95_upper=(
+                baseline.metrics[metric_name].breach_probability_ci95_upper
+            ),
+            candidate_breach_probability_ci95_lower=(
+                candidate.metrics[metric_name].breach_probability_ci95_lower
+            ),
+            candidate_breach_probability_ci95_upper=(
+                candidate.metrics[metric_name].breach_probability_ci95_upper
             ),
             materiality_threshold=thresholds[metric_name],
             direction=_required_direction(directions[metric_name]),
@@ -412,6 +459,18 @@ def validate_scenario_comparison(comparison: ScenarioComparison) -> None:
             candidate_mean=candidate_distribution.mean,
             baseline_breach_probability=baseline_distribution.breach_probability,
             candidate_breach_probability=candidate_distribution.breach_probability,
+            baseline_breach_probability_ci95_lower=(
+                baseline_distribution.breach_probability_ci95_lower
+            ),
+            baseline_breach_probability_ci95_upper=(
+                baseline_distribution.breach_probability_ci95_upper
+            ),
+            candidate_breach_probability_ci95_lower=(
+                candidate_distribution.breach_probability_ci95_lower
+            ),
+            candidate_breach_probability_ci95_upper=(
+                candidate_distribution.breach_probability_ci95_upper
+            ),
             materiality_threshold=thresholds[actual.metric_name],
             direction=_required_direction(directions[actual.metric_name]),
         )
@@ -533,6 +592,12 @@ def _validate_experiment_compatibility(
             "experiment replication identifiers must be aligned",
         ),
         (
+            tuple(item.shock_tape_digest for item in baseline.replications)
+            == tuple(item.shock_tape_digest for item in candidate.replications),
+            "scenario_comparison_shock_tape_alignment",
+            "paired replications must use identical shock tapes",
+        ),
+        (
             candidate.baseline_scenario_id == baseline.scenario_id,
             "scenario_comparison_baseline_scenario_id",
             "candidate must reference the compared baseline scenario",
@@ -582,6 +647,10 @@ def _summarize_metric_comparison(
     candidate_mean: float,
     baseline_breach_probability: float,
     candidate_breach_probability: float,
+    baseline_breach_probability_ci95_lower: float,
+    baseline_breach_probability_ci95_upper: float,
+    candidate_breach_probability_ci95_lower: float,
+    candidate_breach_probability_ci95_upper: float,
     materiality_threshold: float,
     direction: ComparisonDirection,
 ) -> MetricComparison:
@@ -595,7 +664,9 @@ def _summarize_metric_comparison(
         ci95_upper = None
     else:
         margin = (
-            _NORMAL_95_CRITICAL_VALUE * stdev(differences) / math.sqrt(len(differences))
+            _student_t_critical_value(len(differences) - 1)
+            * stdev(differences)
+            / math.sqrt(len(differences))
         )
         ci95_lower = mean_difference - margin
         ci95_upper = mean_difference + margin
@@ -612,6 +683,18 @@ def _summarize_metric_comparison(
         candidate_mean=candidate_mean,
         baseline_breach_probability=baseline_breach_probability,
         candidate_breach_probability=candidate_breach_probability,
+        baseline_breach_probability_ci95_lower=(
+            baseline_breach_probability_ci95_lower
+        ),
+        baseline_breach_probability_ci95_upper=(
+            baseline_breach_probability_ci95_upper
+        ),
+        candidate_breach_probability_ci95_lower=(
+            candidate_breach_probability_ci95_lower
+        ),
+        candidate_breach_probability_ci95_upper=(
+            candidate_breach_probability_ci95_upper
+        ),
         mean_difference=mean_difference,
         ci95_lower=ci95_lower,
         ci95_upper=ci95_upper,
@@ -624,6 +707,20 @@ def _summarize_metric_comparison(
     )
 
 
+def _student_t_critical_value(degrees_of_freedom: int) -> float:
+    """Return a conservative two-sided 95% Student-t critical value."""
+
+    if degrees_of_freedom <= len(_STUDENT_T_95_CRITICAL_VALUES):
+        return _STUDENT_T_95_CRITICAL_VALUES[degrees_of_freedom - 1]
+    if degrees_of_freedom <= 40:
+        return _STUDENT_T_95_CRITICAL_VALUES[-1]
+    if degrees_of_freedom <= 60:
+        return 2.02107539
+    if degrees_of_freedom <= 120:
+        return 2.000297822
+    return 1.979930406
+
+
 def _source_replications(
     comparison: ScenarioComparison,
     *,
@@ -633,6 +730,7 @@ def _source_replications(
         ReplicationMetrics(
             replication_id=paired.replication_id,
             trace_digest="0" * 64,
+            shock_tape_digest="0" * 64,
             metric_entries=(
                 paired.baseline_metric_entries
                 if source == "baseline"

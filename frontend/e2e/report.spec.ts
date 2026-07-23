@@ -13,6 +13,12 @@ function metric(
     candidate_mean: candidate,
     baseline_breach_probability: 0,
     candidate_breach_probability: metricName === "closing_cash" ? 0.25 : 0,
+    baseline_breach_probability_ci95_lower: 0,
+    baseline_breach_probability_ci95_upper: 0.04,
+    candidate_breach_probability_ci95_lower:
+      metricName === "closing_cash" ? 0.05 : 0,
+    candidate_breach_probability_ci95_upper:
+      metricName === "closing_cash" ? 0.7 : 0.04,
     mean_difference: difference,
     ci95_lower: difference * 0.8,
     ci95_upper: difference * 1.2,
@@ -52,11 +58,17 @@ const comparison = {
 };
 
 const report = {
-  brief_schema_version: "0.2.1",
+  brief_schema_version: "0.3.0",
   decision_status: "conditional",
+  evidence_quality: {
+    grade: "decision_grade",
+    actual_replications: 100,
+    minimum_replications: 30,
+    detail: "Replication evidence meets the minimum decision gate.",
+  },
   recommendation: {
     status: "conditional",
-    headline: "Adopt Resilient margin with guardrails",
+    headline: "Pilot Resilient margin with monitored cash guardrails",
     rationale: [
       "EBITDA improves materially under paired uncertainty.",
       "Closing cash retains a downside guardrail.",
@@ -118,7 +130,7 @@ const report = {
   ],
   assumptions: [
     "100 paired replications use common random numbers.",
-    "Confidence intervals use the paired normal approximation.",
+    "Mean-effect intervals use paired Student-t; breach risks use Wilson intervals.",
   ],
   provenance: {
     comparison_digest: comparison.digest,

@@ -1,0 +1,43 @@
+name: Bug report
+description: Report a reproducible defect in the model, API or product experience.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for helping keep the twin reproducible and decision-safe.
+  - type: textarea
+    id: impact
+    attributes:
+      label: Decision impact
+      description: Which conclusion, workflow or invariant is affected?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include inputs, seed, model versions, commands and the smallest reproducible sequence.
+      placeholder: |
+        Seed:
+        Company / scenario / engine / tape versions:
+        Commands:
+        Observed result:
+        Expected result:
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Add logs, digests, screenshots or a failing test without secrets or sensitive data.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: I removed credentials, company data and other sensitive information.
+          required: true
+        - label: This is not a security vulnerability; I will use the private advisory flow for security issues.
+          required: true

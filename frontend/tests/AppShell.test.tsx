@@ -29,6 +29,31 @@ function renderShell(initialEntry = "/") {
   );
 }
 
+beforeEach(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            company_id: "northstar-components",
+            name: "Northstar Components",
+            model_version: "0.2.0",
+            products: [],
+            customer_segments: [],
+            plant: { resources: [], materials: [] },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    ),
+  );
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe("AppShell", () => {
   it("keeps every executive destination visible without a sidebar", () => {
     renderShell();
@@ -69,7 +94,7 @@ describe("AppShell", () => {
     expect(screen.getByRole("heading", { name: "Decision content" })).toBeVisible();
   });
 
-  it("provides a skip link, semantic main region, and operational context", () => {
+  it("provides a skip link, semantic main region, and operational context", async () => {
     renderShell();
 
     expect(screen.getByRole("link", { name: /skip to content/i })).toHaveAttribute(
@@ -81,18 +106,18 @@ describe("AppShell", () => {
       "href",
       "/",
     );
-    expect(screen.getByText("Northstar Components")).toBeVisible();
-    expect(screen.getByText("Reporting date")).toBeVisible();
+    expect(await screen.findByText("Northstar Components")).toBeVisible();
     expect(screen.getByText("Currency")).toBeVisible();
     expect(screen.getByText("Model version")).toBeVisible();
-    expect(screen.getByText("Data freshness")).toBeVisible();
+    expect(screen.getByText("Data mode")).toBeVisible();
+    expect(screen.getByText("Synthetic reference")).toBeVisible();
   });
 
   it("associates every operational value with a preceding term", () => {
     renderShell();
 
-    const reportingTerm = screen.getByText("Reporting date");
-    const reportingValue = screen.getByText("May 16, 2025");
+    const reportingTerm = screen.getByText("Currency");
+    const reportingValue = screen.getByText("EUR");
 
     expect(reportingTerm.tagName).toBe("DT");
     expect(reportingValue.tagName).toBe("DD");

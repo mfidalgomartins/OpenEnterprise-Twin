@@ -1,6 +1,6 @@
 # Model reference
 
-This document describes the equations and validation rules implemented by the 0.1 Northstar simulation. It is a code-level contract, not a claim that the parameters are calibrated to a real manufacturer.
+This document describes the equations and validation rules implemented by the 0.2 Northstar simulation. It is a code-level contract, not a claim that the parameters are calibrated to a real manufacturer.
 
 ## Scope and clock
 
@@ -64,6 +64,8 @@ $$
 P^{net}_{p,s}=\operatorname{round}\left(P^{standard}_p(1-d_s)(1+\Delta P_{p,s})\right).
 $$
 
+Commercial demand lift is not free. On operating days in warm-up and evaluation, the signed incremental expense is the configured daily commercial-investment baseline multiplied by $\Delta C$. A negative change reduces both demand support and spend.
+
 Shipments allocate finished goods by earliest due date and then stable order ID. Revenue and standard COGS are recognized on shipment. Receivables become due on `shipment day + effective payment terms + collection delay`, never earlier than the following day because collections have already executed in the daily chronology.
 
 Overdue open orders are eligible after promised lead time plus grace. Their cancelled order count is a binomial inverse-CDF draw with segment cancellation probability. Unit cancellation reconciles partial and untouched mean-size orders.
@@ -114,6 +116,8 @@ $$
 
 The effective reorder point and order-up-to level are baseline levels plus `SS`. Procurement triggers when on-hand plus open purchase orders is at or below the reorder point. Contractual lead time is multiplied by `1 - lead_time_improvement`, rounded and bounded to at least one day; the stochastic supplier delay is then added.
 
+Supplier unit-cost changes modify the material contribution to effective product cost and therefore shipment COGS and scrap expense. Regular capacity changes carry a daily commitment cost equal to signed incremental minutes times the resource's configured capacity cost; overtime remains charged only when used.
+
 ## Finance and liquidity
 
 Daily fixed cost uses integer cents:
@@ -133,6 +137,7 @@ Conversion cash cost per production start is standard unit cost less standard ma
 $$
 Cash^{close}=Cash^{open}+Collections+Rescue+RevolverDraw
 -SupplierPayments-ConversionCost-OvertimeCost-FixedCost
+-CommercialInvestmentChange-CapacityCommitmentChange
 -Interest-CapitalInvestment-RevolverRepayment.
 $$
 
@@ -171,7 +176,7 @@ x_t=\rho x_{t-1}+\sqrt{1-\rho^2}\,\varepsilon_t,
 \qquad \varepsilon_t\sim\mathcal{N}(0,1).
 $$
 
-The product quality floor is `max(0, baseline_yield - min(0.08, baseline_yield/2))`. Supplier and collection distributions are bounded. None of these values has been calibrated against an external dataset in 0.1.
+The product quality floor is `max(0, baseline_yield - min(0.08, baseline_yield/2))`. Supplier and collection distributions are bounded. None of these reference values has been calibrated against an external dataset.
 
 ## Experiment metrics
 
@@ -180,8 +185,8 @@ Metrics use evaluation days unless stated otherwise:
 | Metric | Definition and unit |
 | --- | --- |
 | Revenue | Sum of shipment revenue, cents |
-| EBITDA | Revenue − standard COGS − fixed cost − overtime cost, cents |
-| Free cash flow | Collections − supplier payments − conversion − overtime − fixed cost − interest over evaluation, less capital investment across the full trace; cents |
+| EBITDA | Evaluation revenue − effective shipment COGS − scrap expense − fixed cost − overtime − commercial-investment change − capacity-commitment change; cents |
+| Free cash flow | Evaluation-origin collections through runoff plus residual evaluation receivables, less evaluation-origin supplier payments through runoff, residual evaluation payables, evaluation conversion/overtime/fixed/interest/commercial/capacity costs and full-trace capital investment; cents |
 | Closing cash | Final runoff-day cash, cents |
 | OTIF | Evaluation-origin orders fulfilled entirely on time ÷ evaluation orders |
 | Cancellation rate | Cancelled evaluation-origin orders ÷ evaluation orders |
@@ -190,9 +195,9 @@ Metrics use evaluation days unless stated otherwise:
 | Peak revolver | Maximum daily closing revolver debt, cents |
 | Rescue funding | Sum of synthetic liquidity support over the full trace, cents |
 
-For each metric, NumPy's deterministic linear percentile estimator produces P5, P10, median, P90 and P95. Standard deviation is population standard deviation (`ddof=0`). Breaches use strict `<` or `>` comparisons. Empirical CVaR integrates exactly 5% of probability mass, fractionally weighting the boundary observation when necessary. Closing-cash breach probability also counts any replication that required rescue funding.
+For each metric, NumPy's deterministic linear percentile estimator produces P5, P10, median, P90 and P95. Standard deviation is population standard deviation (`ddof=0`). Breaches use strict `<` or `>` comparisons and report bounded 95% Wilson score intervals. Empirical CVaR integrates exactly 5% of probability mass, fractionally weighting the boundary observation when necessary. Closing-cash breach probability also counts any replication that required rescue funding.
 
-Scenario comparison aligns replication IDs and computes candidate minus baseline for every metric. It reports paired mean difference, a confidence interval when supported by sample size, paired P5/P50/P95 and probability of improvement under the company-owned direction and materiality threshold. This is variance reduction, not causal identification.
+Scenario comparison aligns replication IDs and shock-tape digests, then computes candidate minus baseline for every metric. It reports paired mean difference, a 95% Student-t interval when supported by sample size (using conservative tabulated critical values), paired P5/P50/P95 and probability of improvement under the company-owned direction and materiality threshold. This is variance reduction, not causal identification.
 
 ## Invariants
 

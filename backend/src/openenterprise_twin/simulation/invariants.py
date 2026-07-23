@@ -143,6 +143,16 @@ def validate_period(period: PeriodResult) -> None:
                 f"overtime use exceeds total capacity use for '{resource_id}'",
             )
 
+    if (
+        period.evaluation_origin_collections_cents > period.collections_cents
+        or period.evaluation_origin_supplier_payments_cents
+        > period.supplier_payments_cents
+    ):
+        _fail(
+            "working_capital_cohort_bound",
+            "evaluation cash flows exceed total cash flows",
+        )
+
     expected_cash = (
         period.opening_cash_cents
         + period.collections_cents
@@ -151,6 +161,8 @@ def validate_period(period: PeriodResult) -> None:
         - period.supplier_payments_cents
         - period.conversion_cost_cents
         - period.overtime_cost_cents
+        - period.commercial_investment_change_cents
+        - period.capacity_commitment_change_cents
         - period.fixed_cost_cents
         - period.interest_paid_cents
         - period.capital_investment_cents

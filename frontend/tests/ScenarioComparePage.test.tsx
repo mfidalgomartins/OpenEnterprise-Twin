@@ -80,6 +80,12 @@ function metricResult(metricName: FixtureMetricName) {
     candidate_mean: candidateMean,
     baseline_breach_probability: 0,
     candidate_breach_probability: metricName === "closing_cash" ? 0.25 : 0,
+    baseline_breach_probability_ci95_lower: 0,
+    baseline_breach_probability_ci95_upper: 0.49,
+    candidate_breach_probability_ci95_lower:
+      metricName === "closing_cash" ? 0.05 : 0,
+    candidate_breach_probability_ci95_upper:
+      metricName === "closing_cash" ? 0.7 : 0.49,
     mean_difference: candidateMean - baselineMean,
     ci95_lower: Math.min(...differences),
     ci95_upper: Math.max(...differences),
@@ -173,11 +179,17 @@ const comparisonFixture = {
 };
 
 const reportFixture = {
-  brief_schema_version: "0.2.1",
+  brief_schema_version: "0.3.0",
   decision_status: "conditional",
+  evidence_quality: {
+    grade: "exploratory",
+    actual_replications: 4,
+    minimum_replications: 30,
+    detail: "Exploratory evidence: 4 paired replications; 30 required for decision-grade evidence.",
+  },
   recommendation: {
     status: "conditional",
-    headline: "Adopt Resilient margin with guardrails",
+    headline: "Hold Resilient margin: 4 of 30 paired replications complete",
     rationale: [
       "ebitda: €100,000 to €280,000 (paired delta €180,000, 100.0% probability of improvement).",
       "closing_cash: €210,000 to €280,000 (paired delta €70,000, 75.0% probability of improvement).",
@@ -254,7 +266,7 @@ const reportFixture = {
   ],
   assumptions: [
     "4 paired replications use common random numbers.",
-    "Confidence intervals use the paired normal approximation.",
+    "Mean-effect intervals use paired Student-t; breach risks use Wilson intervals.",
     "Narrative clauses are selected deterministically from computed states.",
   ],
   provenance: {
@@ -348,15 +360,22 @@ describe("ScenarioComparePage", () => {
     expect(
       screen.getByRole("heading", {
         level: 2,
-        name: "Adopt Resilient margin with guardrails",
+        name: "Hold Resilient margin: 4 of 30 paired replications complete",
       }),
     ).toBeVisible();
+    expect(screen.getByText("Hold", { selector: "p" })).toBeVisible();
 
     const outcomes = screen.getByRole("list", { name: "Key outcomes" });
     expect(within(outcomes).getAllByRole("listitem")).toHaveLength(3);
-    expect(within(outcomes).getByText("+€180k")).toBeVisible();
-    expect(within(outcomes).getByText("+€70k")).toBeVisible();
-    expect(within(outcomes).getByText("+1.2 pp")).toBeVisible();
+    for (const expected of ["+€180k", "+€70k", "+1.2 pp"]) {
+      expect(
+        within(outcomes).getByText(
+          (_, element) =>
+            element?.tagName === "SMALL" &&
+            Boolean(element.textContent?.includes(expected)),
+        ),
+      ).toBeVisible();
+    }
 
     expect(
       screen.getByText(
@@ -373,7 +392,7 @@ describe("ScenarioComparePage", () => {
       screen.getByRole("link", { name: "Open published executive brief" }),
     ).toHaveAttribute("href", "/reports/experiment-42");
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual(
       expect.arrayContaining([
         "/api/v1/experiments/experiment-42/comparison",
@@ -386,18 +405,8 @@ describe("ScenarioComparePage", () => {
     installApiFixture();
     renderDecisionRoom();
 
-    const chart = await screen.findByRole("img", {
-      name: /Resilient margin improves the earnings-to-cash path/i,
-    });
-    expect(chart).toBeVisible();
-    expect(
-      screen.getByText(
-        "Resilient margin improves all 3 earnings-to-cash outcomes on average; shaded bands show the P10–P90 range across paired replications.",
-      ),
-    ).toBeVisible();
-
-    const table = screen.getByRole("table", {
-      name: "Exact earnings-to-cash uncertainty values",
+    const table = await screen.findByRole("table", {
+      name: "Baseline and candidate distributions by outcome",
     });
     expect(table).toBeVisible();
     expect(

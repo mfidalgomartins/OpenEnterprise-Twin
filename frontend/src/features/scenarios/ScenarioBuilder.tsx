@@ -31,7 +31,7 @@ function loadStoredDraft(): StoredDraft {
     version: 1,
   };
   try {
-    const stored = localStorage.getItem(DRAFT_STORAGE_KEY);
+    const stored = sessionStorage.getItem(DRAFT_STORAGE_KEY);
     if (!stored) {
       return fallback;
     }
@@ -70,7 +70,7 @@ export function ScenarioBuilder() {
 
   useEffect(() => {
     const stored: StoredDraft = { draft, saved_at: savedAt, version: 1 };
-    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(stored));
+    sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(stored));
   }, [draft, savedAt]);
 
   if (baselineQuery.isPending || companyQuery.isPending) {
@@ -330,7 +330,7 @@ export function ScenarioBuilder() {
               <input
                 aria-invalid={Boolean(errors.iterations)}
                 id="iterations"
-                max={10_000}
+                max={1_000}
                 min={1}
                 onChange={(event) =>
                   updateField("iterations", event.target.value)

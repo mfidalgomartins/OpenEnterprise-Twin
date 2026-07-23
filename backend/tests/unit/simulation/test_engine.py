@@ -1,5 +1,8 @@
 from decimal import Decimal
 
+import pytest
+
+from openenterprise_twin.domain.errors import DomainValidationError
 from openenterprise_twin.domain.scenario import PolicyLevers, ResourcePolicyChange
 from openenterprise_twin.simulation.demand import (
     binomial_quantile,
@@ -196,13 +199,16 @@ def test_partial_cancellation_cannot_be_reported_as_fulfilled_or_otif() -> None:
     fulfilled_evaluation = {product.product_id: 0}
     otif_evaluation = {product.product_id: 0}
     on_time_units = {product.product_id: 0}
-    receivables: dict[int, int] = {}
+    receivables: dict[int, dict[str, int]] = {}
 
     _ship_orders(
         orders=[order],
         finished_goods={product.product_id: 80},
         shipments={product.product_id: 0},
         products={product.product_id: product},
+        materials={
+            material.material_id: material for material in company.plant.materials
+        },
         segments={segment.segment_id: segment},
         scenario=scenario,
         day_index=0,
@@ -219,7 +225,7 @@ def test_partial_cancellation_cannot_be_reported_as_fulfilled_or_otif() -> None:
     assert otif[product.product_id] == 8
     assert fulfilled_evaluation[product.product_id] == 8
     assert otif_evaluation[product.product_id] == 8
-    assert receivables == {1: 800_000}
+    assert receivables == {1: {"evaluation": 800_000}}
 
 
 def test_shipment_flow_is_conserved() -> None:
@@ -302,7 +308,7 @@ def test_full_reference_horizon_remains_financially_and_operationally_viable() -
         period.closing_cash_cents >= company.financial_policy.liquidity_floor_cents
         for period in trace.periods
     )
-    assert trace.engine_version == "0.1.0"
+    assert trace.engine_version == "0.2.0"
     assert trace.scenario_schema_version == scenario.schema_version
     assert trace.shock_tape_version == tape.tape_version
     assert len(trace.resolved_assumptions_hash) == 64
@@ -388,4 +394,188 @@ def test_rescue_funding_mode_is_auditable_and_preserves_cash_reconciliation() ->
     assert all(
         period.closing_cash_cents >= company.financial_policy.liquidity_floor_cents
         for period in trace.periods
+    )
+
+
+def test_commercial_multiplier_is_validated_before_execution() -> None:
+    company = build_northstar_company()
+    first_product = company.products[0]
+    risky_profiles = tuple(
+        profile.model_copy(
+            update={"commercial_investment_sensitivity": Decimal("2")}
+        )
+        for profile in first_product.demand_profiles
+    )
+    company = company.model_copy(
+        update={
+            "products": (
+                first_product.model_copy(update={"demand_profiles": risky_profiles}),
+                *company.products[1:],
+            )
+        }
+    )
+    scenario = build_baseline_scenario(horizon_days=2).model_copy(
+        update={
+            "policy_levers": PolicyLevers(
+                commercial_investment_change=Decimal("-1")
+            )
+        }
+    )
+
+    with pytest.raises(DomainValidationError, match="commercial multiplier"):
+        simulate_trace(
+            company,
+            scenario,
+            build_shock_tape(company, scenario, seed=1, replication_id=0),
+        )
+
+
+def test_commercial_and_capacity_changes_have_explicit_economic_costs() -> None:
+    company = build_northstar_company()
+    company = company.model_copy(
+        update={
+            "financial_policy": company.financial_policy.model_copy(
+                update={"daily_commercial_investment_cents": 100_000}
+            ),
+            "plant": company.plant.model_copy(
+                update={
+                    "resources": tuple(
+                        resource.model_copy(
+                            update={"capacity_cost_cents_per_minute": 25}
+                        )
+                        for resource in company.plant.resources
+                    )
+                }
+            ),
+        }
+    )
+    scenario = build_baseline_scenario(horizon_days=5).model_copy(
+        update={
+            "policy_levers": PolicyLevers(
+                commercial_investment_change=Decimal("0.10"),
+                resource_changes=tuple(
+                    ResourcePolicyChange(
+                        resource_id=resource.resource_id,
+                        regular_capacity_change=Decimal("0.10"),
+                    )
+                    for resource in company.plant.resources
+                ),
+            )
+        }
+    )
+
+    trace = simulate_trace(
+        company,
+        scenario,
+        build_shock_tape(company, scenario, seed=2, replication_id=0),
+    )
+
+    for period in trace.periods:
+        expected_commercial = 10_000 if period.is_operating_day else 0
+        expected_capacity = (
+            sum(
+                int(
+                    Decimal(resource.daily_capacity_minutes)
+                    * Decimal("0.10")
+                    * Decimal(25)
+                )
+                for resource in company.plant.resources
+            )
+            if period.is_operating_day
+            else 0
+        )
+        assert period.commercial_investment_change_cents == expected_commercial
+        assert period.capacity_commitment_change_cents == expected_capacity
+
+
+def test_policy_costs_are_charged_only_in_the_evaluation_window() -> None:
+    company = build_northstar_company()
+    company = company.model_copy(
+        update={
+            "financial_policy": company.financial_policy.model_copy(
+                update={"daily_commercial_investment_cents": 100_000}
+            ),
+            "plant": company.plant.model_copy(
+                update={
+                    "resources": tuple(
+                        resource.model_copy(
+                            update={"capacity_cost_cents_per_minute": 25}
+                        )
+                        for resource in company.plant.resources
+                    )
+                }
+            ),
+        }
+    )
+    scenario = build_baseline_scenario(horizon_days=21).model_copy(
+        update={
+            "warmup_days": 7,
+            "evaluation_days": 7,
+            "runoff_days": 7,
+            "policy_levers": PolicyLevers(
+                commercial_investment_change=Decimal("0.10"),
+                resource_changes=tuple(
+                    ResourcePolicyChange(
+                        resource_id=resource.resource_id,
+                        regular_capacity_change=Decimal("0.10"),
+                    )
+                    for resource in company.plant.resources
+                ),
+            ),
+        }
+    )
+
+    trace = simulate_trace(
+        company,
+        scenario,
+        build_shock_tape(company, scenario, seed=4, replication_id=0),
+    )
+
+    evaluation_costs = [
+        period.commercial_investment_change_cents
+        + period.capacity_commitment_change_cents
+        for period in trace.periods
+        if period.phase == "evaluation"
+    ]
+    non_evaluation_costs = [
+        period.commercial_investment_change_cents
+        + period.capacity_commitment_change_cents
+        for period in trace.periods
+        if period.phase != "evaluation"
+    ]
+    assert sum(evaluation_costs) > 0
+    assert non_evaluation_costs and set(non_evaluation_costs) == {0}
+
+
+def test_supplier_cost_change_flows_through_cogs_and_scrap() -> None:
+    company = build_northstar_company()
+    baseline = build_baseline_scenario(horizon_days=30)
+    candidate = baseline.model_copy(
+        update={
+            "scenario_id": "supplier-cost-stress",
+            "name": "Supplier cost stress",
+            "baseline_scenario_id": baseline.scenario_id,
+            "policy_levers": PolicyLevers(
+                material_changes=tuple(
+                    {
+                        "material_id": material.material_id,
+                        "supplier_unit_cost_change": Decimal("0.50"),
+                    }
+                    for material in company.plant.materials
+                )
+            ),
+        }
+    )
+    tape = build_shock_tape(company, baseline, seed=3, replication_id=0)
+
+    baseline_trace = simulate_trace(company, baseline, tape)
+    candidate_trace = simulate_trace(company, candidate, tape)
+
+    assert sum(period.cogs_cents for period in candidate_trace.periods) > sum(
+        period.cogs_cents for period in baseline_trace.periods
+    )
+    assert sum(
+        period.production_scrap_cost_cents for period in candidate_trace.periods
+    ) > sum(
+        period.production_scrap_cost_cents for period in baseline_trace.periods
     )

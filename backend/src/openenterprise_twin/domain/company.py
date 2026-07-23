@@ -120,6 +120,7 @@ class ResourceCapacity(DomainModel):
     daily_capacity_minutes: PositiveMinutes
     max_overtime_minutes: Minutes
     overtime_cost_cents_per_minute: MoneyCents
+    capacity_cost_cents_per_minute: MoneyCents = 0
 
 
 class MaterialPolicy(DomainModel):
@@ -170,6 +171,7 @@ class FinancialPolicy(DomainModel):
     monthly_fixed_cost_cents: MoneyCents
     annual_interest_rate: NonNegativeRate
     revolver_limit_cents: MoneyCents
+    daily_commercial_investment_cents: MoneyCents = 0
 
     @model_validator(mode="after")
     def validate_liquidity_policy(self) -> Self:

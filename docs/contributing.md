@@ -25,6 +25,7 @@ The supported commands are:
 | --- | --- |
 | `make dev` | Full local stack with migration and seed |
 | `make demo` | Paired flagship experiment through the public API |
+| `make lock` | Regenerate hash-pinned Python runtime and development locks |
 | `make lint` | Ruff, mypy, import boundaries, ESLint and TypeScript |
 | `make test` | Backend tests except the long performance marker, plus Vitest |
 | `make build` | Backend wheel and production frontend bundle |
@@ -51,6 +52,10 @@ The supported commands are:
 5. Review `git diff` for generated files, unrelated changes and stale documentation.
 
 Do not commit `.env`, virtual environments, `node_modules`, wheels, `dist`, simulation `artifacts`, coverage, caches, Playwright reports or test results. The repository `.gitignore` covers the standard locations.
+
+When Python dependency ranges change, run `make lock` and commit both lockfiles.
+Runtime images consume `backend/requirements.lock`; developer and CI
+environments consume `backend/requirements-dev.lock`.
 
 ## Model changes
 
@@ -87,7 +92,7 @@ Contract changes require integration tests for success, validation, missing reso
 
 ## Plugin changes
 
-New capabilities need an immutable typed input/output protocol, a manifest kind, compatibility validation and registry tests for duplicates, incompatible versions and incorrect implementations. A plugin must not receive a database session, FastAPI request or mutable engine state. Entry-point discovery is not part of 0.1.
+New capabilities need an immutable typed input/output protocol, a manifest kind, compatibility validation and registry tests for duplicates, incompatible versions and incorrect implementations. A plugin must not receive a database session, FastAPI request or mutable engine state. Entry-point discovery is outside this reference release.
 
 ## Pull-request checklist
 

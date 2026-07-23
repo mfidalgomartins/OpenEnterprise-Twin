@@ -7,7 +7,7 @@ test("keeps the model context legible at the mobile breakpoint", async ({
   await page.goto("/");
 
   const contextItems = page.locator(".model-context__item");
-  await expect(contextItems).toHaveCount(4);
+  await expect(contextItems).toHaveCount(3);
 
   const itemWidths = await contextItems.evaluateAll((items) =>
     items.map((item) => item.getBoundingClientRect().width),
@@ -28,6 +28,24 @@ test("keeps the model context legible at the mobile breakpoint", async ({
       () => document.documentElement.scrollWidth === window.innerWidth,
     ),
   ).toBe(true);
+});
+
+test("keeps a visible focus indicator on the main destination", async ({ page }) => {
+  await page.goto("/");
+
+  const main = page.locator("#main-content");
+  await main.focus();
+  const focusStyle = await main.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      color: style.outlineColor,
+      style: style.outlineStyle,
+      width: Number.parseFloat(style.outlineWidth),
+    };
+  });
+
+  expect(focusStyle.style).not.toBe("none");
+  expect(focusStyle.width).toBeGreaterThanOrEqual(2);
 });
 
 test("runs a policy experiment through the live API and publishes its brief", async ({

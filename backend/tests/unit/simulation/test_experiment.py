@@ -56,7 +56,7 @@ def test_experiment_exposes_required_distributions_and_replications() -> None:
     assert result.runoff_days == request.scenario.runoff_days
     assert len(result.company_model_hash) == 64
     assert result.replication_count == 8
-    assert result.company_model_version == "0.1.0"
+    assert result.company_model_version == "0.2.0"
     assert len(result.resolved_assumptions_hash) == 64
     assert len(result.digest) == 64
     assert isinstance(result.created_at, datetime)
@@ -65,6 +65,7 @@ def test_experiment_exposes_required_distributions_and_replications() -> None:
     assert result.plugin_versions
     assert [item.replication_id for item in result.replications] == list(range(8))
     assert all(len(item.trace_digest) == 64 for item in result.replications)
+    assert all(len(item.shock_tape_digest) == 64 for item in result.replications)
     for distribution in result.metrics.values():
         assert distribution.p5 <= distribution.p10
         assert distribution.p10 <= distribution.median
@@ -84,7 +85,7 @@ def test_durable_experiment_artifact_retains_every_full_trace() -> None:
 
     artifact = experiment_module.run_experiment_with_traces(request)
 
-    assert artifact.schema_version == "0.1.0"
+    assert artifact.schema_version == "0.2.0"
     assert artifact.result.replication_count == 2
     assert [trace.replication_id for trace in artifact.traces] == [0, 1]
     assert all(len(trace.periods) == 3 for trace in artifact.traces)
@@ -193,10 +194,17 @@ def test_free_cash_flow_includes_capital_investment_charged_during_warmup() -> N
     )
     evaluation = [period for period in trace.periods if period.phase == "evaluation"]
     expected = sum(
-        period.collections_cents
-        - period.supplier_payments_cents
+        period.evaluation_origin_collections_cents
+        - period.evaluation_origin_supplier_payments_cents
+        for period in trace.periods
+    ) + (
+        trace.periods[-1].closing_evaluation_receivables_cents
+        - trace.periods[-1].closing_evaluation_payables_cents
+    ) + sum(
         - period.conversion_cost_cents
         - period.overtime_cost_cents
+        - period.commercial_investment_change_cents
+        - period.capacity_commitment_change_cents
         - period.fixed_cost_cents
         - period.interest_paid_cents
         for period in evaluation
@@ -211,3 +219,67 @@ def test_free_cash_flow_includes_capital_investment_charged_during_warmup() -> N
     )
 
     assert result.replications[0].metric_values["free_cash_flow"] == expected
+
+
+def test_free_cash_flow_tracks_evaluation_cohorts_through_runoff() -> None:
+    company = build_northstar_company()
+    company = company.model_copy(
+        update={
+            "customer_segments": tuple(
+                segment.model_copy(update={"payment_terms_days": 0})
+                for segment in company.customer_segments
+            )
+        }
+    )
+    scenario = build_baseline_scenario(horizon_days=5).model_copy(
+        update={"warmup_days": 1, "evaluation_days": 1, "runoff_days": 3}
+    )
+    tape = build_shock_tape(company, scenario, seed=20260716, replication_id=0)
+    tape = tape.model_copy(
+        update={
+            "days": tuple(
+                shock.model_copy(
+                    update={
+                        "collection_delay_uniform_entries": tuple(
+                            (segment_id, 0.0)
+                            for segment_id, _ in (
+                                shock.collection_delay_uniform_entries
+                            )
+                        )
+                    }
+                )
+                for shock in tape.days
+            )
+        }
+    )
+
+    trace = simulate_trace(company, scenario, tape)
+    metric_values = experiment_module._trace_metric_values(trace)
+
+    runoff_collections = sum(
+        period.evaluation_origin_collections_cents
+        for period in trace.periods
+        if period.phase == "runoff"
+    )
+    assert runoff_collections > 0
+    expected = (
+        sum(
+            period.evaluation_origin_collections_cents
+            - period.evaluation_origin_supplier_payments_cents
+            for period in trace.periods
+        )
+        + trace.periods[-1].closing_evaluation_receivables_cents
+        - trace.periods[-1].closing_evaluation_payables_cents
+        - sum(
+            period.conversion_cost_cents
+            + period.overtime_cost_cents
+            + period.commercial_investment_change_cents
+            + period.capacity_commitment_change_cents
+            + period.fixed_cost_cents
+            + period.interest_paid_cents
+            for period in trace.periods
+            if period.phase == "evaluation"
+        )
+        - sum(period.capital_investment_cents for period in trace.periods)
+    )
+    assert metric_values["free_cash_flow"] == expected

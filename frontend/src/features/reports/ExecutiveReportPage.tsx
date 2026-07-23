@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 
 import { formatDate, formatPercent } from "../../lib/format";
 import {
@@ -7,6 +7,7 @@ import {
   getScenarioReport,
 } from "../scenarios/api";
 import {
+  formatDecisionStatus,
   formatInteger,
   formatMetricValue,
   metricLabels,
@@ -19,12 +20,6 @@ import type {
   ScenarioComparison,
 } from "../scenarios/types";
 import "./report.css";
-
-const decisionLabels = {
-  adopt: "Adopt",
-  conditional: "Adopt with guardrails",
-  do_not_adopt: "Do not adopt",
-} as const;
 
 const valueMetrics = new Set<MetricName>([
   "revenue",
@@ -153,7 +148,10 @@ function RecommendationChapter({ report }: { report: ExecutiveBrief }) {
           <p
             className={`report-decision report-decision--${report.decision_status}`}
           >
-            {decisionLabels[report.decision_status]}
+            {formatDecisionStatus(
+              report.decision_status,
+              report.evidence_quality.grade,
+            )}
           </p>
           <h3>{report.recommendation.headline}</h3>
         </div>
@@ -187,7 +185,7 @@ function ScenarioChapter({
           <h3>{comparison.baseline_scenario_name}</h3>
           <code>{comparison.baseline_scenario_id}</code>
         </article>
-        <span aria-hidden="true">→</span>
+        <span>versus</span>
         <article>
           <p>Candidate</p>
           <h3>{comparison.candidate_scenario_name}</h3>
@@ -266,7 +264,7 @@ function SensitivityChapter({
       </div>
       <div className="report-guardrails">
         <div>
-          <h3>Binding constraints</h3>
+          <h3>Constraints and watches</h3>
           {report.constraints.length > 0 ? (
             <ul>
               {report.constraints.map((constraint) => (
@@ -457,6 +455,14 @@ export function ExecutiveReportPage() {
           The published comparison could not be loaded. Check the experiment
           identifier and API state.
         </p>
+        <button
+          onClick={() => {
+            void Promise.all([comparisonQuery.refetch(), reportQuery.refetch()]);
+          }}
+          type="button"
+        >
+          Retry brief
+        </button>
       </section>
     );
   }
@@ -477,9 +483,25 @@ export function ExecutiveReportPage() {
           <p>Published snapshot</p>
           <span>Experiment {experimentId}</span>
         </div>
-        <button type="button" onClick={() => window.print()}>
-          Print or save PDF
-        </button>
+        <div className="executive-report__actions">
+          <Link
+            to={`/scenarios/${encodeURIComponent(comparison.candidate_scenario_id)}/compare?experiment=${experimentId}`}
+          >
+            Back to decision room
+          </Link>
+          <Link to="/scenarios">Create variant</Link>
+          <button
+            onClick={() => {
+              void navigator.clipboard?.writeText(report.digest);
+            }}
+            type="button"
+          >
+            Copy evidence ID
+          </button>
+          <button type="button" onClick={() => window.print()}>
+            Print or save PDF
+          </button>
+        </div>
       </div>
 
       <div className="executive-report__print-header" aria-hidden="true">
