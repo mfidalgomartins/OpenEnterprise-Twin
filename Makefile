@@ -35,7 +35,7 @@ export OPENENTERPRISE_TWIN_REPLICATION_WORKERS_PER_EXPERIMENT
 export OPENENTERPRISE_TWIN_EXPERIMENT_SHUTDOWN_TIMEOUT_SECONDS
 export OPENENTERPRISE_TWIN_CORS_ALLOWED_ORIGINS
 
-.PHONY: help install backend-install frontend-install lock db migrate seed dev test lint demo build docker-build e2e
+.PHONY: help install backend-install frontend-install lock db migrate seed dev test lint demo demo-autopilot build docker-build e2e
 
 help: ## Show the supported developer commands.
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "%-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -115,6 +115,12 @@ demo: backend-install ## Create the flagship paired experiment through the API.
 		--frontend-url 'http://$(DEV_HOST):$(FRONTEND_PORT)' \
 		--seed $(DEMO_SEED) \
 		--replications $(DEMO_REPLICATIONS) \
+		--timeout $(DEMO_TIMEOUT_SECONDS)
+
+demo-autopilot: backend-install ## Run the end-to-end governed decision-loop demo.
+	cd backend && ../$(PYTHON) -m openenterprise_twin.cli.demo autopilot \
+		--api-url 'http://$(DEV_HOST):$(API_PORT)' \
+		--seed $(DEMO_SEED) \
 		--timeout $(DEMO_TIMEOUT_SECONDS)
 
 build: install ## Build the backend wheel and production frontend bundle.

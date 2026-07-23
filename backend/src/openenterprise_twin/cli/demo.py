@@ -5,6 +5,7 @@ import sys
 from dataclasses import dataclass
 from decimal import Decimal
 from time import monotonic, sleep
+from typing import Any
 
 import httpx
 from pydantic import BaseModel
@@ -16,6 +17,7 @@ from openenterprise_twin.api.schemas import (
     ExperimentRead,
     ScenarioRead,
 )
+from openenterprise_twin.domain.ledger import DecisionContent
 from openenterprise_twin.domain.scenario import (
     MaterialPolicyChange,
     PolicyLevers,
@@ -64,6 +66,23 @@ class DemoResult:
     candidate_assumptions_hash: str
     comparison_digest: str
     brief_digest: str
+
+
+@dataclass(frozen=True, slots=True)
+class AutopilotResult:
+    """Evidence from one end-to-end governed decision-loop demo run."""
+
+    dataset_digest: str
+    quality_score: float
+    credibility_score: float
+    credibility_band: str
+    backtest_wmape: float
+    optimization_digest: str
+    frontier_size: int
+    evaluations: int
+    decision_packet_digest: str
+    monitoring_level: str
+    recalibration_required: bool
 
 
 def build_flagship_scenario(*, horizon_days: int = 515) -> Scenario:
@@ -319,6 +338,225 @@ def _submit_and_wait(
     return experiment
 
 
+def run_autopilot_demo(
+    client: httpx.Client,
+    *,
+    seed: int = DEFAULT_MASTER_SEED,
+) -> AutopilotResult:
+    """Drive the full closed loop through the API and return its evidence."""
+
+    ingest = _post_json(
+        client,
+        "/api/v1/datasets/synthetic",
+        {"dataset_id": "northstar-history", "days": 540},
+    )
+    calibration = _post_json(
+        client,
+        "/api/v1/calibrations",
+        {
+            "calibration_id": "northstar-cal",
+            "dataset_id": "northstar-history",
+            "backtest_cutoff": "2024-12-31",
+        },
+    )
+    optimization = _post_json(
+        client,
+        "/api/v1/optimizations",
+        {
+            "config": {
+                "objectives": [
+                    {"metric_name": "ebitda", "direction": "maximize"},
+                    {"metric_name": "otif", "direction": "maximize"},
+                ],
+                "levers": [
+                    {
+                        "lever_id": "commercial",
+                        "kind": "commercial_investment",
+                        "lower": -0.1,
+                        "upper": 0.3,
+                    },
+                    {
+                        "lever_id": "overtime",
+                        "kind": "overtime",
+                        "target_id": "assembly",
+                        "lower": 0,
+                        "upper": 400,
+                    },
+                ],
+                "constraints": [
+                    {
+                        "metric_name": "rescue_funding",
+                        "operator": "lte",
+                        "bound": 0,
+                        "kind": "hard",
+                    }
+                ],
+                "population_size": 12,
+                "max_generations": 5,
+                "max_evaluations": 120,
+                "seed": seed,
+            },
+            "horizon_days": 120,
+            "replications": 6,
+            "master_seed": seed,
+        },
+    )
+    content = _demo_decision_content()
+    _post_json(
+        client,
+        "/api/v1/ledger/decisions",
+        {"decision_id": "northstar-pricing", "content": content},
+    )
+    _walk_decision_to_monitoring(client, "northstar-pricing", content)
+    monitoring = _post_json(
+        client,
+        "/api/v1/ledger/decisions/northstar-pricing/outcomes",
+        {
+            "predictions": [
+                {
+                    "metric_name": "ebitda",
+                    "expected_mean": 24_000_000.0,
+                    "lower": 20_000_000.0,
+                    "upper": 28_000_000.0,
+                    "improvement_direction": "higher",
+                },
+                {
+                    "metric_name": "otif",
+                    "expected_mean": 0.96,
+                    "lower": 0.95,
+                    "upper": 0.99,
+                    "improvement_direction": "higher",
+                    "is_hard_constraint": True,
+                    "constraint_bound": 0.94,
+                },
+            ],
+            "outcomes": [
+                {
+                    "metric_name": "ebitda",
+                    "as_of": "2026-03-01",
+                    "realized_value": 21_500_000.0,
+                },
+                {
+                    "metric_name": "otif",
+                    "as_of": "2026-03-01",
+                    "realized_value": 0.955,
+                },
+            ],
+        },
+    )
+    packet = _get_json(
+        client, "/api/v1/ledger/decisions/northstar-pricing/packet"
+    )
+    credibility = calibration["credibility"]
+    backtests = calibration["backtests"]
+    result = optimization["result"]
+    return AutopilotResult(
+        dataset_digest=str(ingest["dataset"]["data_digest"]),
+        quality_score=float(ingest["quality"]["quality_score"]),
+        credibility_score=float(credibility["score"]),
+        credibility_band=str(credibility["band"]),
+        backtest_wmape=(
+            float(backtests[0]["overall_weighted_mape"]) if backtests else 0.0
+        ),
+        optimization_digest=str(optimization["digest"]),
+        frontier_size=len(result["frontier"]),
+        evaluations=int(optimization["evaluations"]),
+        decision_packet_digest=str(packet["packet_digest"]),
+        monitoring_level=str(monitoring["recommended_level"]),
+        recalibration_required=bool(monitoring["drift"]["recalibration_required"]),
+    )
+
+
+def _walk_decision_to_monitoring(
+    client: httpx.Client,
+    decision_id: str,
+    content: dict[str, object],
+) -> None:
+    base = f"/api/v1/ledger/decisions/{decision_id}/transitions"
+    _post_json(client, base, {
+        "expected_version": 1, "target": "evidence_ready", "actor": "cfo"
+    })
+    _post_json(client, base, {
+        "expected_version": 2, "target": "under_review", "actor": "cfo"
+    })
+    digest = DecisionContent.model_validate(content).content_digest()
+    _post_json(client, base, {
+        "expected_version": 3,
+        "target": "approved",
+        "actor": "ceo",
+        "approval": {
+            "approver": "ceo",
+            "decision": "approve",
+            "occurred_at": "2026-07-23T12:00:00Z",
+            "approved_content_digest": digest,
+        },
+    })
+    _post_json(client, base, {
+        "expected_version": 4, "target": "implemented", "actor": "coo"
+    })
+    _post_json(client, base, {
+        "expected_version": 5, "target": "monitoring", "actor": "coo"
+    })
+
+
+def _demo_decision_content() -> dict[str, object]:
+    return {
+        "title": "Raise contracted pricing 3% with capacity backstop",
+        "owner": "cfo",
+        "context": "Margin recovery under stable contracted demand.",
+        "objectives": ["grow ebitda", "hold otif >= 0.95"],
+        "company_model_version": "0.2.0",
+        "recommendation": "Adopt the +3% contracted price with an overtime backstop.",
+        "chosen_alternative": "price-plus-3-with-capacity",
+        "rejected_alternatives": ["status-quo", "price-plus-3-no-capacity"],
+        "justification": (
+            "The optimizer's frontier and paired experiments show a material "
+            "EBITDA gain while holding the OTIF hard constraint."
+        ),
+        "hard_constraints": ["otif >= 0.94"],
+        "risks": ["Contracted churn if competitors hold price."],
+        "evidence": {"experiment_ids": [1, 2]},
+    }
+
+
+def format_autopilot_result(result: "AutopilotResult") -> str:
+    return "\n".join(
+        (
+            "OpenEnterprise Twin — Governed Decision Autopilot",
+            f"  data quality score      {result.quality_score:.3f}",
+            f"  credibility             {result.credibility_score:.1f} "
+            f"({result.credibility_band})",
+            f"  backtest wMAPE          {result.backtest_wmape:.3f}",
+            f"  optimizer evaluations   {result.evaluations}",
+            f"  pareto frontier size    {result.frontier_size}",
+            f"  optimization digest     {result.optimization_digest[:16]}",
+            f"  decision packet digest  {result.decision_packet_digest[:16]}",
+            f"  monitoring outcome      {result.monitoring_level}",
+            f"  recalibration required  {result.recalibration_required}",
+        )
+    )
+
+
+def _post_json(
+    client: httpx.Client, path: str, body: dict[str, object]
+) -> dict[str, Any]:
+    response = client.post(path, json=body)
+    _raise_for_status(response)
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise DemoError(f"unexpected non-object response from {path}")
+    return payload
+
+
+def _get_json(client: httpx.Client, path: str) -> dict[str, Any]:
+    response = client.get(path)
+    _raise_for_status(response)
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise DemoError(f"unexpected non-object response from {path}")
+    return payload
+
+
 def _get_model[ModelT: BaseModel](
     client: httpx.Client,
     path: str,
@@ -359,6 +597,12 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--replications", type=int, default=DEFAULT_REPLICATIONS)
     run.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     run.add_argument("--poll-interval", type=float, default=0.5)
+    autopilot = commands.add_parser(
+        "autopilot", help="run the end-to-end governed decision-loop demo"
+    )
+    autopilot.add_argument("--api-url", default=DEFAULT_API_URL)
+    autopilot.add_argument("--seed", type=int, default=DEFAULT_MASTER_SEED)
+    autopilot.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     return parser
 
 
@@ -371,6 +615,16 @@ def main(argv: list[str] | None = None) -> int:
             created = seed_from_settings()
             state = "created" if created else "already current"
             print(f"Northstar baseline: {state}")
+            return 0
+        if arguments.command == "autopilot":
+            with httpx.Client(
+                base_url=str(arguments.api_url).rstrip("/"),
+                timeout=float(arguments.timeout),
+            ) as client:
+                autopilot_result = run_autopilot_demo(
+                    client, seed=int(arguments.seed)
+                )
+            print(format_autopilot_result(autopilot_result))
             return 0
         with httpx.Client(
             base_url=str(arguments.api_url).rstrip("/"),

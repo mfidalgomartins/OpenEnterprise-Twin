@@ -121,3 +121,38 @@ def test_run_demo_creates_paired_experiments_and_reproducibility_output(
     assert "Replications: 2" in output
     assert f"Comparison digest: {result.comparison_digest}" in output
     assert f"Brief digest: {result.brief_digest}" in output
+
+
+def test_run_autopilot_demo_drives_the_full_loop(tmp_path: Path) -> None:
+    from openenterprise_twin.cli.demo import (
+        format_autopilot_result,
+        run_autopilot_demo,
+    )
+
+    settings = Settings(
+        database_url=f"sqlite+pysqlite:///{tmp_path / 'autopilot.db'}",
+        artifact_directory=tmp_path / "artifacts",
+        experiment_workers=1,
+        replication_workers_per_experiment=1,
+        max_optimization_evaluations=120,
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        result = run_autopilot_demo(client, seed=731)
+
+    assert result.quality_score == 1.0
+    assert result.credibility_band == "decision_grade"
+    assert result.credibility_score >= 80.0
+    assert result.backtest_wmape >= 0.0
+    assert result.frontier_size >= 1
+    assert len(result.decision_packet_digest) == 64
+    assert result.monitoring_level in {
+        "within_expectation",
+        "early_warning",
+        "material_deviation",
+        "recalibration_required",
+        "decision_review_required",
+    }
+    rendered = format_autopilot_result(result)
+    assert "Governed Decision Autopilot" in rendered
