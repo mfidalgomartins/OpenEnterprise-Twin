@@ -421,24 +421,24 @@ function formatMoneyValue(value: number | undefined): string {
 
 // --- Adaptive Policy Builder -------------------------------------------------
 
+const ADAPTIVE_RULE = {
+  metric: "backlog_days" as const,
+  operator: "gt" as const,
+  windowPeriods: 5,
+  persistencePeriods: 3,
+  cooldownPeriods: 15,
+  maxActivations: 5,
+  horizonDays: 120,
+  replications: 6,
+  seed: 731,
+};
+
 export function AdaptivePolicyPage() {
   const [threshold, setThreshold] = useState(8);
   const [result, setResult] = useState<AdaptiveComparison | null>(null);
 
   const compare = useMutation({
-    mutationFn: () =>
-      compareAdaptivePolicy({
-        metric: "backlog_days",
-        operator: "gt",
-        threshold,
-        windowPeriods: 5,
-        persistencePeriods: 3,
-        cooldownPeriods: 15,
-        maxActivations: 5,
-        horizonDays: 120,
-        replications: 6,
-        seed: 731,
-      }),
+    mutationFn: () => compareAdaptivePolicy({ ...ADAPTIVE_RULE, threshold }),
     onSuccess: setResult,
   });
 
@@ -472,9 +472,12 @@ export function AdaptivePolicyPage() {
         }
       >
         <p className="ap-rule">
-          <Badge tone="observed">IF</Badge> backlog_days &gt; {threshold} for 3
-          of 5 periods → <Badge tone="high">add overtime capacity</Badge> (cooldown
-          15, max 5 activations)
+          <Badge tone="observed">IF</Badge> {ADAPTIVE_RULE.metric} &gt;{" "}
+          {threshold} for {ADAPTIVE_RULE.persistencePeriods} of{" "}
+          {ADAPTIVE_RULE.windowPeriods} periods →{" "}
+          <Badge tone="high">add overtime capacity</Badge> (cooldown{" "}
+          {ADAPTIVE_RULE.cooldownPeriods}, max {ADAPTIVE_RULE.maxActivations}{" "}
+          activations)
         </p>
         {compare.isPending ? (
           <StateBanner
