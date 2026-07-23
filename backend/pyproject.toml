@@ -13,6 +13,7 @@ authors = [{name = "OpenEnterprise Twin contributors"}]
 dependencies = [
     "alembic>=1.14,<2",
     "fastapi>=0.115,<1",
+    "greenlet>=3.1,<4",
     "httpx>=0.28,<1",
     "numpy>=2.2,<3",
     "pydantic>=2.10,<3",
