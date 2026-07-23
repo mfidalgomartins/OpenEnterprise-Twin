@@ -71,11 +71,63 @@ function immutableScenarioConflict(): RunIssue {
   };
 }
 
+function normalizeDecimalString(value: string) {
+  const match = /^([+-]?)(\d*)(?:\.(\d*))?$/.exec(value);
+  if (!match || (!match[2] && !match[3])) {
+    return value;
+  }
+  const integer = (match[2] || "0").replace(/^0+(?=\d)/, "");
+  const fraction = (match[3] ?? "").replace(/0+$/, "");
+  const sign = match[1] === "-" && (integer !== "0" || fraction) ? "-" : "";
+  return `${sign}${integer}${fraction ? `.${fraction}` : ""}`;
+}
+
+const decimalPolicyFields = new Set([
+  "commercial_investment_change",
+  "price_change",
+  "regular_capacity_change",
+  "safety_stock_coverage_days",
+  "supplier_lead_time_improvement",
+  "supplier_unit_cost_change",
+]);
+
+function canonicalPolicyValue(value: unknown, fieldName?: string): unknown {
+  if (typeof value === "string") {
+    return decimalPolicyFields.has(fieldName ?? "")
+      ? normalizeDecimalString(value)
+      : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => canonicalPolicyValue(entry));
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonicalPolicyValue(entry, key)]),
+    );
+  }
+  return value;
+}
+
 function scenarioMatches(
   existing: ScenarioResource,
   expected: ScenarioPayload,
 ) {
-  return JSON.stringify(scenarioPayload(existing)) === JSON.stringify(expected);
+  const current = scenarioPayload(existing);
+  return (
+    current.scenario_id === expected.scenario_id &&
+    current.name === expected.name &&
+    current.company_model_version === expected.company_model_version &&
+    current.schema_version === expected.schema_version &&
+    current.horizon_days === expected.horizon_days &&
+    current.warmup_days === expected.warmup_days &&
+    current.evaluation_days === expected.evaluation_days &&
+    current.runoff_days === expected.runoff_days &&
+    current.baseline_scenario_id === expected.baseline_scenario_id &&
+    JSON.stringify(canonicalPolicyValue(current.policy_levers)) ===
+      JSON.stringify(canonicalPolicyValue(expected.policy_levers))
+  );
 }
 
 async function ensureScenario(scenario: ScenarioPayload) {

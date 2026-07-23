@@ -30,6 +30,24 @@ test("keeps the model context legible at the mobile breakpoint", async ({
   ).toBe(true);
 });
 
+test("keeps a visible focus indicator on the main destination", async ({ page }) => {
+  await page.goto("/");
+
+  const main = page.locator("#main-content");
+  await main.focus();
+  const focusStyle = await main.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      color: style.outlineColor,
+      style: style.outlineStyle,
+      width: Number.parseFloat(style.outlineWidth),
+    };
+  });
+
+  expect(focusStyle.style).not.toBe("none");
+  expect(focusStyle.width).toBeGreaterThanOrEqual(2);
+});
+
 test("runs a policy experiment through the live API and publishes its brief", async ({
   page,
 }) => {

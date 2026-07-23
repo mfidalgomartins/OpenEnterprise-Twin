@@ -326,6 +326,7 @@ def simulate_trace(
             company,
             scenario,
             is_operating_day=is_operating_day,
+            phase=phase,
         )
         interest_paid_cents = _daily_interest_cents(
             debt_cents, company.financial_policy.annual_interest_rate
@@ -917,7 +918,7 @@ def _commercial_investment_change_cents(
     is_operating_day: bool,
     phase: Phase,
 ) -> int:
-    if not is_operating_day or phase == "runoff":
+    if not is_operating_day or phase != "evaluation":
         return 0
     change = scenario.policy_levers.commercial_investment_change
     return int(
@@ -933,8 +934,9 @@ def _capacity_commitment_change_cents(
     scenario: Scenario,
     *,
     is_operating_day: bool,
+    phase: Phase,
 ) -> int:
-    if not is_operating_day:
+    if not is_operating_day or phase != "evaluation":
         return 0
     changes = {
         change.resource_id: change

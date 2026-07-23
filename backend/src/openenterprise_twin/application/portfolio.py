@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from openenterprise_twin.application.decisions import (
     get_or_build_brief,
@@ -15,7 +15,8 @@ from openenterprise_twin.application.ports import (
     DecisionEvidenceRepository,
 )
 from openenterprise_twin.domain.company import DomainModel
-from openenterprise_twin.reporting.brief import DecisionStatus
+from openenterprise_twin.reporting.brief import DecisionStatus, ExecutiveBrief
+from openenterprise_twin.scenarios.comparison import ScenarioComparison
 from openenterprise_twin.simulation.experiment import MetricName
 
 EvidenceGrade = Literal["exploratory", "decision_grade"]
@@ -146,16 +147,20 @@ def _build_decision_summary(
     repository: DecisionEvidenceRepository,
     artifact_store: ArtifactReader,
 ) -> DecisionSummary:
-    comparison = get_or_build_comparison(
-        record.id,
-        repository=repository,
-        artifact_store=artifact_store,
-    )
-    brief = get_or_build_brief(
-        record.id,
-        repository=repository,
-        artifact_store=artifact_store,
-    )
+    persisted = _load_persisted_evidence(record)
+    if persisted is None:
+        comparison = get_or_build_comparison(
+            record.id,
+            repository=repository,
+            artifact_store=artifact_store,
+        )
+        brief = get_or_build_brief(
+            record.id,
+            repository=repository,
+            artifact_store=artifact_store,
+        )
+    else:
+        comparison, brief = persisted
     metric_names: tuple[MetricName, ...] = (
         "ebitda",
         "free_cash_flow",
@@ -189,6 +194,20 @@ def _build_decision_summary(
         comparison_digest=comparison.digest,
         brief_digest=brief.digest,
     )
+
+
+def _load_persisted_evidence(
+    record: CompletedCandidateRecord,
+) -> tuple[ScenarioComparison, ExecutiveBrief] | None:
+    if record.comparison_payload is None or record.brief_payload is None:
+        return None
+    try:
+        return (
+            ScenarioComparison.model_validate(record.comparison_payload),
+            ExecutiveBrief.model_validate(record.brief_payload),
+        )
+    except ValidationError:
+        return None
 
 
 def _metric_delta(summary: DecisionSummary, metric_name: MetricName) -> float:

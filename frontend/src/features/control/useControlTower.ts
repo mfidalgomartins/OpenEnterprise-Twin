@@ -38,13 +38,12 @@ export function useControlTower() {
     baseline: baseline.data,
     company: company.data,
     decisions: decisions.data,
-    error: company.error ?? baseline.error ?? decisions.error ?? frontier.error,
+    error: company.error ?? baseline.error ?? decisions.error,
     frontier: frontier.data,
     isPending:
       company.isPending ||
       baseline.isPending ||
-      decisions.isPending ||
-      frontier.isPending,
+      decisions.isPending,
     retry,
   };
 }

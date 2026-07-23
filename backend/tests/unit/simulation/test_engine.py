@@ -488,6 +488,65 @@ def test_commercial_and_capacity_changes_have_explicit_economic_costs() -> None:
         assert period.capacity_commitment_change_cents == expected_capacity
 
 
+def test_policy_costs_are_charged_only_in_the_evaluation_window() -> None:
+    company = build_northstar_company()
+    company = company.model_copy(
+        update={
+            "financial_policy": company.financial_policy.model_copy(
+                update={"daily_commercial_investment_cents": 100_000}
+            ),
+            "plant": company.plant.model_copy(
+                update={
+                    "resources": tuple(
+                        resource.model_copy(
+                            update={"capacity_cost_cents_per_minute": 25}
+                        )
+                        for resource in company.plant.resources
+                    )
+                }
+            ),
+        }
+    )
+    scenario = build_baseline_scenario(horizon_days=21).model_copy(
+        update={
+            "warmup_days": 7,
+            "evaluation_days": 7,
+            "runoff_days": 7,
+            "policy_levers": PolicyLevers(
+                commercial_investment_change=Decimal("0.10"),
+                resource_changes=tuple(
+                    ResourcePolicyChange(
+                        resource_id=resource.resource_id,
+                        regular_capacity_change=Decimal("0.10"),
+                    )
+                    for resource in company.plant.resources
+                ),
+            ),
+        }
+    )
+
+    trace = simulate_trace(
+        company,
+        scenario,
+        build_shock_tape(company, scenario, seed=4, replication_id=0),
+    )
+
+    evaluation_costs = [
+        period.commercial_investment_change_cents
+        + period.capacity_commitment_change_cents
+        for period in trace.periods
+        if period.phase == "evaluation"
+    ]
+    non_evaluation_costs = [
+        period.commercial_investment_change_cents
+        + period.capacity_commitment_change_cents
+        for period in trace.periods
+        if period.phase != "evaluation"
+    ]
+    assert sum(evaluation_costs) > 0
+    assert non_evaluation_costs and set(non_evaluation_costs) == {0}
+
+
 def test_supplier_cost_change_flows_through_cogs_and_scrap() -> None:
     company = build_northstar_company()
     baseline = build_baseline_scenario(horizon_days=30)

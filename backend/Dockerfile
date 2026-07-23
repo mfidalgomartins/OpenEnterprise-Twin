@@ -8,9 +8,11 @@ RUN python -m venv "$VIRTUAL_ENV"
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 WORKDIR /build
-COPY pyproject.toml ./
+COPY pyproject.toml requirements.lock ./
 COPY src ./src
-RUN python -m pip install --upgrade pip && python -m pip install .
+RUN python -m pip install --require-hashes -r requirements.lock && \
+    python -m pip install --no-deps . && \
+    python -m pip check
 
 
 FROM python:3.12-slim AS runtime

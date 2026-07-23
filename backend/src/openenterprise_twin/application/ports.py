@@ -23,6 +23,8 @@ class CompletedCandidateRecord:
     scenario_name: str
     completed_at: datetime
     replication_count: int
+    comparison_payload: Mapping[str, object] | None = None
+    brief_payload: Mapping[str, object] | None = None
 
 
 class ArtifactReader(Protocol):

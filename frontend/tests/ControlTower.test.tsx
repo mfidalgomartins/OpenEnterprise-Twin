@@ -137,7 +137,7 @@ function jsonResponse(payload: unknown) {
   });
 }
 
-function renderControlTower() {
+function renderControlTower({ frontierFails = false } = {}) {
   vi.stubGlobal(
     "fetch",
     vi.fn<typeof fetch>((input) => {
@@ -152,7 +152,14 @@ function renderControlTower() {
         return Promise.resolve(jsonResponse(decisions));
       }
       if (path.endsWith("/api/v1/frontier")) {
-        return Promise.resolve(jsonResponse(frontier));
+        return Promise.resolve(
+          frontierFails
+            ? new Response(JSON.stringify({ detail: "Frontier unavailable" }), {
+                headers: { "Content-Type": "application/problem+json" },
+                status: 503,
+              })
+            : jsonResponse(frontier),
+        );
       }
       return Promise.reject(new Error(`Unexpected API request: ${path}`));
     }),
@@ -209,5 +216,15 @@ describe("enterprise control tower", () => {
       "href",
       "/reports/17",
     );
+  });
+
+  it("keeps the core tower available when the optional frontier fails", async () => {
+    renderControlTower({ frontierFails: true });
+
+    expect(
+      await screen.findByRole("heading", { name: "Decision briefing" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Control tower unavailable")).not.toBeInTheDocument();
+    expect(screen.getByText("No decision-grade frontier")).toBeVisible();
   });
 });

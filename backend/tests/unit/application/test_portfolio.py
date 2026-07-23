@@ -1,9 +1,26 @@
 from datetime import UTC, datetime
+from decimal import Decimal
+from types import SimpleNamespace
+from typing import cast
 
 from openenterprise_twin.application.portfolio import (
     DecisionSummary,
     PortfolioMetric,
     build_policy_frontier,
+    list_decision_portfolio,
+)
+from openenterprise_twin.application.ports import (
+    ArtifactReader,
+    CompletedCandidateRecord,
+    DecisionEvidenceRepository,
+)
+from openenterprise_twin.domain.scenario import PolicyLevers
+from openenterprise_twin.reporting.brief import build_executive_brief
+from openenterprise_twin.scenarios.comparison import compare_experiments
+from openenterprise_twin.simulation.experiment import ExperimentRequest, run_experiment
+from openenterprise_twin.simulation.reference import (
+    build_baseline_scenario,
+    build_northstar_company,
 )
 
 
@@ -91,3 +108,71 @@ def test_policy_frontier_is_deterministic_regardless_of_input_order() -> None:
     )
 
     assert build_policy_frontier(items) == build_policy_frontier(tuple(reversed(items)))
+
+
+def test_portfolio_uses_bulk_loaded_persisted_evidence() -> None:
+    company = build_northstar_company()
+    baseline_scenario = build_baseline_scenario(horizon_days=3)
+    candidate_scenario = baseline_scenario.model_copy(
+        update={
+            "scenario_id": "cached-decision",
+            "name": "Cached decision",
+            "baseline_scenario_id": baseline_scenario.scenario_id,
+            "policy_levers": PolicyLevers(
+                commercial_investment_change=Decimal("0.05")
+            ),
+        }
+    )
+    baseline = run_experiment(
+        ExperimentRequest(
+            company=company,
+            scenario=baseline_scenario,
+            master_seed=731,
+            replications=1,
+            max_workers=1,
+        )
+    )
+    candidate = run_experiment(
+        ExperimentRequest(
+            company=company,
+            scenario=candidate_scenario,
+            master_seed=731,
+            replications=1,
+            max_workers=1,
+        )
+    )
+    comparison = compare_experiments(baseline, candidate)
+    brief = build_executive_brief(comparison)
+    record = cast(
+        CompletedCandidateRecord,
+        SimpleNamespace(
+            id=7,
+            scenario_id=candidate_scenario.scenario_id,
+            scenario_name=candidate_scenario.name,
+            completed_at=datetime(2026, 7, 23, tzinfo=UTC),
+            replication_count=1,
+            comparison_payload=comparison.model_dump(mode="json"),
+            brief_payload=brief.model_dump(mode="json"),
+        ),
+    )
+
+    class CachedRepository:
+        def list_completed_candidates(self, **_kwargs: object):
+            return (record,)
+
+        def get(self, _experiment_id: int):
+            raise AssertionError("cached portfolio evidence must not be re-read")
+
+    class UnusedArtifactStore:
+        def get_json(self, _digest: str):
+            raise AssertionError("cached portfolio evidence must not load artifacts")
+
+    portfolio = list_decision_portfolio(
+        repository=cast(DecisionEvidenceRepository, CachedRepository()),
+        artifact_store=cast(ArtifactReader, UnusedArtifactStore()),
+        limit=20,
+    )
+
+    assert [item.experiment_id for item in portfolio.items] == [7]
+    assert portfolio.items[0].comparison_digest == comparison.digest
+    assert portfolio.items[0].brief_digest == brief.digest

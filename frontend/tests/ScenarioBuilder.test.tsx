@@ -449,4 +449,66 @@ describe("ScenarioBuilder", () => {
       ),
     ).toBeVisible();
   });
+
+  it("accepts a stored immutable scenario with equivalent decimal formatting", async () => {
+    const expected = buildCandidateScenario(
+      { ...defaultScenarioDraft, price_change_percent: "4" },
+      baseline,
+    );
+    const fallbackFetch = successfulExperimentFetch();
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      const path = String(input);
+      const method = init?.method ?? "GET";
+      if (
+        method === "GET" &&
+        path.includes("/api/v1/scenarios/") &&
+        !path.endsWith("/api/v1/scenarios/current-plan")
+      ) {
+        return Promise.resolve(
+          jsonResponse({
+            id: expected.scenario_id,
+            ...expected,
+            policy_levers: {
+              one_off_capital_investment_cents: 0,
+              payment_term_changes: [],
+              material_changes: [],
+              resource_changes: [],
+              commercial_investment_change: "0.000",
+              price_changes: [
+                {
+                  price_change: "0.040",
+                  product_id: "intelligent-valve",
+                  segment_id: "spot",
+                },
+              ],
+            },
+          }),
+        );
+      }
+      return fallbackFetch(input, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderBuilder();
+
+    const price = await screen.findByLabelText(
+      "Spot intelligent valve price change",
+    );
+    await user.clear(price);
+    await user.type(price, "4");
+    await user.click(screen.getByRole("button", { name: "Run comparison" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Comparison evidence is ready.",
+      ),
+    );
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input, init]) =>
+          String(input).endsWith("/api/v1/scenarios") &&
+          init?.method === "POST",
+      ),
+    ).toHaveLength(0);
+  });
 });

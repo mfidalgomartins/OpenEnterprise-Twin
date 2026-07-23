@@ -25,6 +25,7 @@ The supported commands are:
 | --- | --- |
 | `make dev` | Full local stack with migration and seed |
 | `make demo` | Paired flagship experiment through the public API |
+| `make lock` | Regenerate hash-pinned Python runtime and development locks |
 | `make lint` | Ruff, mypy, import boundaries, ESLint and TypeScript |
 | `make test` | Backend tests except the long performance marker, plus Vitest |
 | `make build` | Backend wheel and production frontend bundle |
@@ -51,6 +52,10 @@ The supported commands are:
 5. Review `git diff` for generated files, unrelated changes and stale documentation.
 
 Do not commit `.env`, virtual environments, `node_modules`, wheels, `dist`, simulation `artifacts`, coverage, caches, Playwright reports or test results. The repository `.gitignore` covers the standard locations.
+
+When Python dependency ranges change, run `make lock` and commit both lockfiles.
+Runtime images consume `backend/requirements.lock`; developer and CI
+environments consume `backend/requirements-dev.lock`.
 
 ## Model changes
 

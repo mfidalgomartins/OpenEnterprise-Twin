@@ -15,6 +15,7 @@ ReplicationWorkerCount = Annotated[int, Field(ge=1, le=16)]
 ShutdownTimeout = Annotated[float, Field(gt=0, le=300)]
 RequestBodyBytes = Annotated[int, Field(ge=1, le=100_000_000)]
 ExperimentPeriods = Annotated[int, Field(ge=1, le=100_000_000)]
+_DEVELOPMENT_TRUSTED_HOSTS = ("localhost", "127.0.0.1", "testserver")
 
 
 class Settings(BaseSettings):
@@ -41,17 +42,23 @@ class Settings(BaseSettings):
         "development"
     )
     api_key: SecretStr | None = None
-    trusted_hosts: tuple[str, ...] = ("localhost", "127.0.0.1", "testserver")
+    trusted_hosts: tuple[str, ...] = _DEVELOPMENT_TRUSTED_HOSTS
     max_request_body_bytes: RequestBodyBytes = 1_048_576
     max_experiment_periods: ExperimentPeriods = 50_000
 
     @model_validator(mode="after")
     def require_production_api_key(self) -> "Settings":
-        if self.deployment_environment == "production" and (
-            self.api_key is None
-            or len(self.api_key.get_secret_value()) < 32
-        ):
-            raise ValueError(
-                "api_key with at least 32 characters is required in production"
-            )
+        if self.deployment_environment == "production":
+            if self.api_key is None or len(self.api_key.get_secret_value()) < 32:
+                raise ValueError(
+                    "api_key with at least 32 characters is required in production"
+                )
+            if (
+                not self.trusted_hosts
+                or "*" in self.trusted_hosts
+                or self.trusted_hosts == _DEVELOPMENT_TRUSTED_HOSTS
+            ):
+                raise ValueError(
+                    "trusted_hosts must be explicit and restrictive in production"
+                )
         return self

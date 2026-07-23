@@ -270,7 +270,15 @@ class SqlAlchemyDecisionEvidenceRepository:
     ) -> tuple[CompletedCandidateRecord, ...]:
         with self._session_factory() as session:
             statement = (
-                select(ExperimentRecord, ScenarioRecord.name)
+                select(
+                    ExperimentRecord.id,
+                    ExperimentRecord.scenario_id,
+                    ScenarioRecord.name,
+                    ExperimentRecord.completed_at,
+                    ExperimentRecord.replication_count,
+                    ExperimentRecord.comparison_payload,
+                    ExperimentRecord.brief_payload,
+                )
                 .join(
                     ScenarioRecord,
                     ScenarioRecord.scenario_id == ExperimentRecord.scenario_id,
@@ -286,16 +294,34 @@ class SqlAlchemyDecisionEvidenceRepository:
                 statement = statement.where(ExperimentRecord.id < before_id)
             rows = session.execute(statement).all()
             records: list[CompletedCandidateRecord] = []
-            for record, scenario_name in rows:
-                if record.completed_at is None:
+            for (
+                experiment_id,
+                scenario_id,
+                scenario_name,
+                completed_at,
+                replication_count,
+                comparison_payload,
+                brief_payload,
+            ) in rows:
+                if completed_at is None:
                     raise RuntimeError("completed experiment is missing completed_at")
                 records.append(
                     CompletedCandidateRecord(
-                        id=record.id,
-                        scenario_id=record.scenario_id,
+                        id=experiment_id,
+                        scenario_id=scenario_id,
                         scenario_name=scenario_name,
-                        completed_at=record.completed_at,
-                        replication_count=record.replication_count,
+                        completed_at=completed_at,
+                        replication_count=replication_count,
+                        comparison_payload=(
+                            dict(comparison_payload)
+                            if comparison_payload is not None
+                            else None
+                        ),
+                        brief_payload=(
+                            dict(brief_payload)
+                            if brief_payload is not None
+                            else None
+                        ),
                     )
                 )
             return tuple(records)

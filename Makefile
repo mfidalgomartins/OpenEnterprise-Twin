@@ -6,10 +6,11 @@ include .env
 export
 endif
 
-PYTHON_BOOTSTRAP ?= python3.12
+PYTHON_BOOTSTRAP ?= python3
 VENV ?= .venv
 PYTHON := $(VENV)/bin/python
 PIP := $(PYTHON) -m pip
+PIP_TOOLS_VERSION ?= 7.6.0
 COMPOSE ?= docker compose
 DEV_HOST ?= 127.0.0.1
 API_PORT ?= 8000
@@ -34,7 +35,7 @@ export OPENENTERPRISE_TWIN_REPLICATION_WORKERS_PER_EXPERIMENT
 export OPENENTERPRISE_TWIN_EXPERIMENT_SHUTDOWN_TIMEOUT_SECONDS
 export OPENENTERPRISE_TWIN_CORS_ALLOWED_ORIGINS
 
-.PHONY: help install backend-install frontend-install db migrate seed dev test lint demo build docker-build e2e
+.PHONY: help install backend-install frontend-install lock db migrate seed dev test lint demo build docker-build e2e
 
 help: ## Show the supported developer commands.
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "%-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -44,11 +45,14 @@ $(PYTHON):
 		echo "Python 3.12 is required. Set PYTHON_BOOTSTRAP to its executable." >&2; \
 		exit 1; \
 	}
+	@$(PYTHON_BOOTSTRAP) -c 'import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 12) else "Python 3.12 is required")'
 	$(PYTHON_BOOTSTRAP) -m venv $(VENV)
 
-$(VENV)/.backend-installed: backend/pyproject.toml | $(PYTHON)
+$(VENV)/.backend-installed: backend/pyproject.toml backend/requirements-dev.lock | $(PYTHON)
 	$(PIP) install --upgrade pip
-	$(PIP) install -e './backend[dev]'
+	$(PIP) install --require-hashes -r backend/requirements-dev.lock
+	$(PIP) install --no-deps -e ./backend
+	$(PIP) check
 	@touch $@
 
 frontend/node_modules/.install-stamp: frontend/package-lock.json frontend/package.json
@@ -60,6 +64,15 @@ backend-install: $(VENV)/.backend-installed ## Install the backend and developme
 frontend-install: frontend/node_modules/.install-stamp ## Install locked frontend dependencies.
 
 install: backend-install frontend-install ## Install backend and frontend dependencies.
+
+lock: | $(PYTHON) ## Regenerate hash-pinned Python runtime and development locks.
+	$(PIP) install 'pip-tools==$(PIP_TOOLS_VERSION)'
+	$(VENV)/bin/pip-compile --strip-extras --generate-hashes \
+		--resolver=backtracking --output-file backend/requirements.lock \
+		backend/pyproject.toml
+	$(VENV)/bin/pip-compile --strip-extras --extra dev --generate-hashes \
+		--resolver=backtracking --output-file backend/requirements-dev.lock \
+		backend/pyproject.toml
 
 db: ## Start PostgreSQL 16 and wait for its health check.
 	$(COMPOSE) up -d --wait db

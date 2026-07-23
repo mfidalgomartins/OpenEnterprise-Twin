@@ -1,12 +1,15 @@
 """End-to-end contracts for durable scenario experiments."""
 
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic, sleep
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr, ValidationError
+from starlette.requests import Request
 
 from openenterprise_twin.api import app as app_module
 from openenterprise_twin.api.app import create_app
@@ -535,6 +538,65 @@ def test_production_requires_a_strong_api_key(
             deployment_environment="production",
             api_key=api_key,
         )
+
+
+def test_production_requires_explicit_trusted_hosts(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="trusted_hosts"):
+        Settings(
+            database_url=f"sqlite+pysqlite:///{tmp_path / 'twin.db'}",
+            artifact_directory=tmp_path / "artifacts",
+            deployment_environment="production",
+            api_key=SecretStr("test-enterprise-key-with-32-characters"),
+        )
+
+
+@pytest.mark.parametrize("trusted_hosts", ((), ("*",)))
+def test_production_rejects_unsafe_trusted_hosts(
+    tmp_path: Path,
+    trusted_hosts: tuple[str, ...],
+) -> None:
+    with pytest.raises(ValidationError, match="trusted_hosts"):
+        Settings(
+            database_url=f"sqlite+pysqlite:///{tmp_path / 'twin.db'}",
+            artifact_directory=tmp_path / "artifacts",
+            deployment_environment="production",
+            api_key=SecretStr("test-enterprise-key-with-32-characters"),
+            trusted_hosts=trusted_hosts,
+        )
+
+
+def test_mutation_audit_log_escapes_control_characters(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = create_app(_settings(tmp_path))
+    monkeypatch.setattr(
+        Request,
+        "url",
+        property(
+            lambda _request: SimpleNamespace(
+                path="/api/v1/scenarios/a\r\nforged"
+            )
+        ),
+    )
+
+    with (
+        caplog.at_level(logging.INFO, logger="openenterprise_twin.api.errors"),
+        TestClient(app) as client,
+    ):
+        client.delete("/api/v1/scenarios/a")
+
+    audit_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "openenterprise_twin.api.errors"
+        and record.getMessage().startswith("audit_event ")
+    ]
+    assert len(audit_messages) == 1
+    assert "\r" not in audit_messages[0]
+    assert "\n" not in audit_messages[0]
+    assert r"\r\n" in audit_messages[0]
 
 
 def test_api_key_protects_resources_but_not_health(tmp_path: Path) -> None:
