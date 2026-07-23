@@ -1,5 +1,14 @@
 import type { PropsWithChildren, ReactNode } from "react";
 
+export type Tone =
+  | "high"
+  | "warning"
+  | "risk"
+  | "observed"
+  | "estimated"
+  | "assumed"
+  | "neutral";
+
 export function Panel({
   title,
   description,
@@ -124,6 +133,6 @@ export function Stat({
 export function Badge({
   tone,
   children,
-}: PropsWithChildren<{ tone: string }>) {
+}: PropsWithChildren<{ tone: Tone }>) {
   return <span className={`ap-badge ap-badge--${tone}`}>{children}</span>;
 }

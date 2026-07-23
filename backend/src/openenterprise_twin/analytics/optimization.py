@@ -14,15 +14,14 @@ experiment engine, while tests can drive a fast closed-form evaluator.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from decimal import Decimal
-from hashlib import sha256
 from typing import Annotated, Literal, Protocol
 
 import numpy as np
 from pydantic import Field, model_validator
 
+from openenterprise_twin.analytics._digest import canonical_digest
 from openenterprise_twin.domain.company import CompanyModel, DomainModel, Identifier
 from openenterprise_twin.domain.errors import DomainValidationError
 from openenterprise_twin.domain.scenario import (
@@ -307,7 +306,13 @@ def decode_levers(
     """Map a genome in the unit hypercube to a validated ``PolicyLevers``."""
 
     commercial = base_scenario.policy_levers.commercial_investment_change
-    price_changes = list(base_scenario.policy_levers.price_changes)
+    # Keyed by (segment, product) so a price lever that overlaps a base change
+    # or another price lever replaces it rather than producing a duplicate
+    # target, which ``PolicyLevers`` would reject.
+    price_changes = {
+        (change.segment_id, change.product_id): change
+        for change in base_scenario.policy_levers.price_changes
+    }
     resource_changes = {
         change.resource_id: change
         for change in base_scenario.policy_levers.resource_changes
@@ -321,7 +326,8 @@ def decode_levers(
         if lever.kind == "commercial_investment":
             commercial = _decimal(value)
         elif lever.kind == "price" and lever.target_id is not None:
-            price_changes.extend(_price_changes(company, lever.target_id, value))
+            for change in _price_changes(company, lever.target_id, value):
+                price_changes[(change.segment_id, change.product_id)] = change
         elif lever.kind == "overtime" and lever.target_id is not None:
             resource_changes[lever.target_id] = ResourcePolicyChange(
                 resource_id=lever.target_id,
@@ -333,7 +339,7 @@ def decode_levers(
                 change_days=round(value),
             )
     return PolicyLevers(
-        price_changes=tuple(price_changes),
+        price_changes=tuple(price_changes.values()),
         commercial_investment_change=commercial,
         resource_changes=tuple(resource_changes.values()),
         payment_term_changes=tuple(payment_changes.values()),
@@ -819,6 +825,4 @@ def _optimization_digest(
         ),
         "evaluations": evaluations,
     }
-    return sha256(
-        json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    return canonical_digest(body)

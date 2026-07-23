@@ -40,6 +40,17 @@ from openenterprise_twin.domain.errors import DomainValidationError
 from openenterprise_twin.domain.scenario import Scenario
 
 
+class DatasetTooLargeError(Exception):
+    """Raised when a dataset exceeds the deployment ingestion limit."""
+
+    def __init__(self, *, observation_count: int, limit: int) -> None:
+        super().__init__(
+            f"{observation_count} observations exceed the limit of {limit}"
+        )
+        self.observation_count = observation_count
+        self.limit = limit
+
+
 @dataclass(frozen=True, slots=True)
 class StoredDataset:
     dataset_id: str
@@ -123,11 +134,20 @@ class CalibrationStudioService:
         *,
         datasets: DatasetRepository,
         calibrations: CalibrationRepository,
+        max_observations: int,
     ) -> None:
         self._datasets = datasets
         self._calibrations = calibrations
+        self._max_observations = max_observations
 
     def ingest_dataset(self, dataset: HistoricalDataset) -> StoredDataset:
+        # Enforced here so every ingestion path -- direct upload or synthetic
+        # generation -- is bounded, not only the JSON route handler.
+        if len(dataset.observations) > self._max_observations:
+            raise DatasetTooLargeError(
+                observation_count=len(dataset.observations),
+                limit=self._max_observations,
+            )
         if self._datasets.get(dataset.dataset_id) is not None:
             raise DomainValidationError(
                 f"dataset '{dataset.dataset_id}' already exists"
@@ -174,7 +194,7 @@ class CalibrationStudioService:
             calibration=calibration,
             credibility=credibility,
             backtests=backtests,
-            created_at=datetime.now(tz=calibration.created_at.tzinfo),
+            created_at=calibration.created_at,
         )
         return self._calibrations.save(stored)
 

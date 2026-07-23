@@ -15,6 +15,7 @@ from typing import Protocol
 from openenterprise_twin.domain.errors import DomainValidationError
 from openenterprise_twin.domain.ledger import (
     APPROVAL_TRANSITION,
+    EDITABLE_STATES,
     ApprovalRecord,
     DecisionContent,
     DecisionPacket,
@@ -24,10 +25,6 @@ from openenterprise_twin.domain.ledger import (
     ensure_separation_of_duties,
     validate_transition,
 )
-
-#: States in which a decision's content may still be edited. After review the
-#: rationale and evidence are frozen, so approved evidence cannot change.
-EDITABLE_STATES: frozenset[DecisionState] = frozenset({"draft", "evidence_ready"})
 
 
 class LedgerError(Exception):

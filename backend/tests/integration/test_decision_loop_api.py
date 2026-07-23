@@ -9,7 +9,7 @@ from openenterprise_twin.domain.ledger import DecisionContent
 from openenterprise_twin.infrastructure.settings import Settings
 
 
-def _settings(tmp_path: Path) -> Settings:
+def _settings(tmp_path: Path, **overrides: object) -> Settings:
     return Settings(
         database_url=f"sqlite+pysqlite:///{tmp_path / 'loop.db'}",
         artifact_directory=tmp_path / "artifacts",
@@ -17,6 +17,7 @@ def _settings(tmp_path: Path) -> Settings:
         database_pool_size=2,
         database_max_overflow=0,
         max_optimization_evaluations=60,
+        **overrides,
     )
 
 
@@ -62,6 +63,19 @@ def test_calibration_studio_flow(tmp_path: Path) -> None:
         assert credibility["band"] == "decision_grade"
         assert credibility["score"] >= 80.0
         assert calibrate.json()["backtests"]
+
+
+def test_synthetic_ingestion_respects_observation_cap(tmp_path: Path) -> None:
+    # The size cap lives in the service, so even server-generated synthetic
+    # datasets (which never touch the JSON body limit) are bounded.
+    app = create_app(_settings(tmp_path, max_dataset_observations=100))
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/datasets/synthetic",
+            json={"dataset_id": "big", "days": 540},
+        )
+        assert response.status_code == 413
+        assert response.json()["code"] == "dataset_too_large"
 
 
 def test_duplicate_dataset_conflicts(tmp_path: Path) -> None:

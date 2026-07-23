@@ -76,8 +76,9 @@ APPROVAL_TRANSITION: tuple[DecisionState, DecisionState] = (
     "approved",
 )
 
-#: States in which the decision rationale may still be revised.
-_EDITABLE_STATES: frozenset[DecisionState] = frozenset({"draft", "evidence_ready"})
+#: States in which the decision rationale may still be revised. After review the
+#: rationale and evidence are frozen, so approved evidence cannot change.
+EDITABLE_STATES: frozenset[DecisionState] = frozenset({"draft", "evidence_ready"})
 
 
 def is_terminal(state: DecisionState) -> bool:
@@ -181,7 +182,7 @@ class DecisionTransition(DomainModel):
         if self.from_state == self.to_state:
             # A same-state event records a content revision or annotation; it is
             # only legal while the decision can still be edited.
-            if self.from_state not in _EDITABLE_STATES:
+            if self.from_state not in EDITABLE_STATES:
                 raise DomainValidationError(
                     "same-state events are only valid before review"
                 )

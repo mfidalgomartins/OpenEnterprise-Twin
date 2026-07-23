@@ -9,6 +9,7 @@ import {
   ScoreDial,
   Stat,
   StateBanner,
+  type Tone,
 } from "./components";
 import {
   compareAdaptivePolicy,
@@ -527,7 +528,7 @@ export function AdaptivePolicyPage() {
 
 // --- Decision Ledger ---------------------------------------------------------
 
-const STATE_TONE: Record<DecisionState, string> = {
+const STATE_TONE: Record<DecisionState, Tone> = {
   draft: "neutral",
   evidence_ready: "observed",
   under_review: "warning",
@@ -644,7 +645,7 @@ export function DecisionLedgerPage() {
 
 // --- Monitoring Center -------------------------------------------------------
 
-const LEVEL_TONE: Record<string, string> = {
+const LEVEL_TONE: Record<string, Tone> = {
   within_expectation: "high",
   early_warning: "warning",
   material_deviation: "warning",

@@ -45,7 +45,10 @@ from openenterprise_twin.api.dependencies import (
     require_principal,
 )
 from openenterprise_twin.api.errors import ApiProblemError
-from openenterprise_twin.application.decision_loop import StoredDataset
+from openenterprise_twin.application.decision_loop import (
+    DatasetTooLargeError,
+    StoredDataset,
+)
 from openenterprise_twin.application.ledger import (
     DecisionListItem,
     DecisionSnapshot,
@@ -129,18 +132,8 @@ def ingest_dataset(
     response: Response,
     services: ServicesDependency,
 ) -> DatasetIngestResponse:
-    if len(request.observations) > services.max_dataset_observations:
-        raise ApiProblemError(
-            status=413,
-            code="dataset_too_large",
-            title="Dataset exceeds the ingestion limit",
-            detail=(
-                f"{len(request.observations):,} observations exceed the limit of "
-                f"{services.max_dataset_observations:,}."
-            ),
-        )
     dataset = _build_ingest_dataset(request)
-    stored = services.calibration_studio.ingest_dataset(dataset)
+    stored = _ingest(services, dataset)
     response.headers["Location"] = f"/api/v1/datasets/{stored.dataset_id}"
     return DatasetIngestResponse(
         dataset=_dataset_summary(stored),
@@ -165,12 +158,27 @@ def ingest_synthetic_dataset(
         days=request.days,
         dataset_id=request.dataset_id,
     )
-    stored = services.calibration_studio.ingest_dataset(dataset)
+    stored = _ingest(services, dataset)
     response.headers["Location"] = f"/api/v1/datasets/{stored.dataset_id}"
     return DatasetIngestResponse(
         dataset=_dataset_summary(stored),
         quality=stored.quality,
     )
+
+
+def _ingest(services: AppServices, dataset: HistoricalDataset) -> StoredDataset:
+    try:
+        return services.calibration_studio.ingest_dataset(dataset)
+    except DatasetTooLargeError as error:
+        raise ApiProblemError(
+            status=413,
+            code="dataset_too_large",
+            title="Dataset exceeds the ingestion limit",
+            detail=(
+                f"{error.observation_count:,} observations exceed the limit of "
+                f"{error.limit:,}."
+            ),
+        ) from error
 
 
 @decision_loop_router.post(

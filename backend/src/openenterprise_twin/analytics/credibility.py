@@ -26,13 +26,12 @@ Interpretation bands:
 
 from __future__ import annotations
 
-import json
-from hashlib import sha256
 from statistics import mean
 from typing import Annotated, Literal
 
 from pydantic import Field
 
+from openenterprise_twin.analytics._digest import canonical_digest
 from openenterprise_twin.analytics.backtesting import BacktestResult
 from openenterprise_twin.analytics.calibration import CalibrationResult
 from openenterprise_twin.analytics.quality import DataQualityReport
@@ -301,6 +300,4 @@ def _credibility_digest(
         "score": score,
         "components": [component.model_dump(mode="json") for component in components],
     }
-    return sha256(
-        json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    return canonical_digest(body)

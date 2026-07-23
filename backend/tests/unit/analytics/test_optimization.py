@@ -193,3 +193,35 @@ def test_decode_levers_maps_all_kinds(company: CompanyModel) -> None:
     assert levers.price_changes
     assert levers.resource_changes[0].overtime_capacity_minutes == 400
     assert levers.payment_term_changes[0].change_days == 0
+
+
+def test_decode_levers_deduplicates_overlapping_price_targets(
+    company: CompanyModel,
+) -> None:
+    # Two price levers on the same product must not produce duplicate
+    # (segment, product) changes, which PolicyLevers would reject.
+    scenario = build_baseline_scenario(horizon_days=60)
+    config = OptimizationConfig(
+        objectives=(ObjectiveSpec(metric_name="ebitda", direction="maximize"),),
+        levers=(
+            LeverSpec(
+                lever_id="price-a",
+                kind="price",
+                target_id="standard-valve",
+                lower=-0.05,
+                upper=0.05,
+            ),
+            LeverSpec(
+                lever_id="price-b",
+                kind="price",
+                target_id="standard-valve",
+                lower=0.02,
+                upper=0.08,
+            ),
+        ),
+    )
+    levers = decode_levers(config, company, scenario, (1.0, 1.0))
+    keys = [
+        (change.segment_id, change.product_id) for change in levers.price_changes
+    ]
+    assert len(keys) == len(set(keys))

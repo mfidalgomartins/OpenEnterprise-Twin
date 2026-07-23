@@ -10,14 +10,13 @@ and cooldown-aware so the loop stays quiet until it genuinely needs attention.
 
 from __future__ import annotations
 
-import json
 from datetime import date, datetime
-from hashlib import sha256
 from statistics import mean
 from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
+from openenterprise_twin.analytics._digest import canonical_digest
 from openenterprise_twin.domain.company import DomainModel, Identifier
 from openenterprise_twin.domain.errors import DomainValidationError
 
@@ -411,6 +410,4 @@ def _report_digest(
         "kpis": [kpi.model_dump(mode="json") for kpi in kpis],
         "drift": drift.model_dump(mode="json"),
     }
-    return sha256(
-        json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    return canonical_digest(body)
