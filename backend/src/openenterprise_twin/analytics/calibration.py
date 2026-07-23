@@ -9,15 +9,14 @@ sampling error of the mean; seasonality is a bucketed multiplicative index.
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, date, datetime
-from hashlib import sha256
 from math import sqrt
 from statistics import mean, stdev
 from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
+from openenterprise_twin.analytics._digest import canonical_digest
 from openenterprise_twin.analytics.history import (
     SERIES_REGISTRY,
     HistoricalDataset,
@@ -633,6 +632,4 @@ def _calibration_digest(
         "parameters": [p.model_dump(mode="json") for p in parameters],
         "seasonality": [s.model_dump(mode="json") for s in seasonality],
     }
-    return sha256(
-        json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    return canonical_digest(body)

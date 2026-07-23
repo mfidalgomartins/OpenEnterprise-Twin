@@ -37,7 +37,6 @@ class AppServices:
     monitoring: MonitoringService
     decision_ledger: DecisionLedgerService
     max_experiment_periods: int
-    max_dataset_observations: int
     max_adaptive_periods: int
 
 

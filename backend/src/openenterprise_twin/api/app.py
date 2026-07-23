@@ -70,7 +70,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     expose_docs = resolved_settings.deployment_environment != "production"
     app = FastAPI(
         title="OpenEnterprise Twin API",
-        version="0.3.0",
+        version="0.3.1",
         lifespan=lifespan,
         docs_url="/docs" if expose_docs else None,
         redoc_url="/redoc" if expose_docs else None,
@@ -113,6 +113,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         calibration_studio=CalibrationStudioService(
             datasets=dataset_repository,
             calibrations=calibration_repository,
+            max_observations=resolved_settings.max_dataset_observations,
         ),
         optimization_lab=OptimizationLabService(
             optimizations=SqlOptimizationRepository(session_factory),
@@ -126,7 +127,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             SqlDecisionLedgerRepository(session_factory)
         ),
         max_experiment_periods=resolved_settings.max_experiment_periods,
-        max_dataset_observations=resolved_settings.max_dataset_observations,
         max_adaptive_periods=resolved_settings.max_adaptive_periods,
     )
     app.state.settings = resolved_settings

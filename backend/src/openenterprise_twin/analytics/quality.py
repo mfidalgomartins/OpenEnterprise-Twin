@@ -7,15 +7,14 @@ credibility scoring can trace exactly why a dataset is trusted or distrusted.
 
 from __future__ import annotations
 
-import json
 from collections import Counter
-from hashlib import sha256
 from itertools import pairwise
 from statistics import median
 from typing import Annotated, Literal
 
 from pydantic import Field
 
+from openenterprise_twin.analytics._digest import canonical_digest
 from openenterprise_twin.analytics.history import (
     SERIES_REGISTRY,
     HistoricalDataset,
@@ -195,9 +194,7 @@ def assess_data_quality(dataset: HistoricalDataset) -> DataQualityReport:
         "components": [component.model_dump(mode="json") for component in components],
         "issues": [issue.model_dump(mode="json") for issue in ordered_issues],
     }
-    report_digest = sha256(
-        json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    report_digest = canonical_digest(body)
     return DataQualityReport(
         dataset_id=dataset.dataset_id,
         data_digest=dataset.data_digest,

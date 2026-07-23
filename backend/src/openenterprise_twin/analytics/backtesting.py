@@ -9,14 +9,13 @@ probabilistic interval coverage.
 
 from __future__ import annotations
 
-import json
 from datetime import date
-from hashlib import sha256
 from math import sqrt
 from typing import Annotated
 
 from pydantic import Field
 
+from openenterprise_twin.analytics._digest import canonical_digest
 from openenterprise_twin.analytics.calibration import (
     Z_95,
     EstimatedParameter,
@@ -257,9 +256,7 @@ def _backtest_digest(
         "cutoff": cutoff.isoformat(),
         "kpis": [kpi.model_dump(mode="json") for kpi in kpis],
     }
-    return sha256(
-        json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    return canonical_digest(body)
 
 
 __all__ = [
