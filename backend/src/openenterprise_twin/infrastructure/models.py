@@ -317,6 +317,10 @@ class DecisionEventRecord(Base):
             f"to_state IN ({_DECISION_STATE_SQL})",
             name="to_state",
         ),
+        CheckConstraint(
+            f"from_state IS NULL OR from_state IN ({_DECISION_STATE_SQL})",
+            name="from_state",
+        ),
         CheckConstraint("sequence >= 1", name="sequence_positive"),
         UniqueConstraint(
             "decision_id",

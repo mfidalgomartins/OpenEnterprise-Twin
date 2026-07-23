@@ -236,6 +236,7 @@
 
 .ap-dial__ring {
   --ap-fraction: 0;
+  position: relative;
   width: 8.5rem;
   height: 8.5rem;
   border-radius: 50%;

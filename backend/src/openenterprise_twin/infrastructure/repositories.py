@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from sqlalchemy import CursorResult, Select, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from openenterprise_twin.analytics.backtesting import BacktestResult
@@ -31,6 +32,7 @@ from openenterprise_twin.application.ports import (
     CompletedCandidateRecord,
     ExperimentDecisionRecord,
 )
+from openenterprise_twin.domain.errors import DomainValidationError
 from openenterprise_twin.domain.ledger import (
     ApprovalRecord,
     DecisionContent,
@@ -384,29 +386,35 @@ class SqlDecisionLedgerRepository:
         transition: DecisionTransition,
         occurred_at: datetime,
     ) -> DecisionSnapshot:
-        with self._session_factory() as session, session.begin():
-            record = DecisionLedgerRecord(
-                decision_id=decision_id,
-                title=content.title,
-                owner=content.owner,
-                state="draft",
-                version=1,
-                content=content.model_dump(mode="json"),
-                created_at=occurred_at,
-                updated_at=occurred_at,
-            )
-            session.add(record)
-            session.flush()
-            session.add(
-                _event_row(
+        try:
+            with self._session_factory() as session, session.begin():
+                record = DecisionLedgerRecord(
                     decision_id=decision_id,
-                    sequence=1,
-                    content_digest=content.content_digest(),
-                    transition=transition,
-                    approval=None,
+                    title=content.title,
+                    owner=content.owner,
+                    state="draft",
+                    version=1,
+                    content=content.model_dump(mode="json"),
+                    created_at=occurred_at,
+                    updated_at=occurred_at,
                 )
-            )
-            session.flush()
+                session.add(record)
+                session.flush()
+                session.add(
+                    _event_row(
+                        decision_id=decision_id,
+                        sequence=1,
+                        content_digest=content.content_digest(),
+                        transition=transition,
+                        approval=None,
+                    )
+                )
+                session.flush()
+        except IntegrityError as error:
+            # A concurrent creator (or a client retry) raced us to this id.
+            raise LedgerConflictError(
+                f"decision '{decision_id}' already exists"
+            ) from error
         snapshot = self.get(decision_id)
         if snapshot is None:  # pragma: no cover - defensive
             raise RuntimeError("decision vanished immediately after creation")
@@ -581,18 +589,23 @@ class SqlDatasetRepository:
     def save(
         self, dataset: HistoricalDataset, quality: DataQualityReport
     ) -> StoredDataset:
-        with self._session_factory() as session, session.begin():
-            record = HistoricalDatasetRecord(
-                dataset_id=dataset.dataset_id,
-                company_id=dataset.company_id,
-                data_digest=dataset.data_digest,
-                observation_count=len(dataset.observations),
-                payload=dataset.model_dump(mode="json"),
-                quality=quality.model_dump(mode="json"),
-            )
-            session.add(record)
-            session.flush()
-            created_at = record.created_at
+        try:
+            with self._session_factory() as session, session.begin():
+                record = HistoricalDatasetRecord(
+                    dataset_id=dataset.dataset_id,
+                    company_id=dataset.company_id,
+                    data_digest=dataset.data_digest,
+                    observation_count=len(dataset.observations),
+                    payload=dataset.model_dump(mode="json"),
+                    quality=quality.model_dump(mode="json"),
+                )
+                session.add(record)
+                session.flush()
+                created_at = record.created_at
+        except IntegrityError as error:
+            raise DomainValidationError(
+                f"dataset '{dataset.dataset_id}' already exists"
+            ) from error
         return StoredDataset(
             dataset_id=dataset.dataset_id,
             company_id=dataset.company_id,
@@ -643,23 +656,28 @@ class SqlCalibrationRepository:
             return self._to_stored(record)
 
     def save(self, stored: StoredCalibration) -> StoredCalibration:
-        with self._session_factory() as session, session.begin():
-            record = CalibrationRecord(
-                calibration_id=stored.calibration_id,
-                dataset_id=stored.dataset_id,
-                company_model_version=stored.calibration.company_model_version,
-                digest=stored.calibration.digest,
-                calibration=stored.calibration.model_dump(mode="json"),
-                credibility=stored.credibility.model_dump(mode="json"),
-                backtests=[
-                    backtest.model_dump(mode="json")
-                    for backtest in stored.backtests
-                ],
-                created_at=stored.created_at,
-            )
-            session.add(record)
-            session.flush()
-            created_at = record.created_at
+        try:
+            with self._session_factory() as session, session.begin():
+                record = CalibrationRecord(
+                    calibration_id=stored.calibration_id,
+                    dataset_id=stored.dataset_id,
+                    company_model_version=stored.calibration.company_model_version,
+                    digest=stored.calibration.digest,
+                    calibration=stored.calibration.model_dump(mode="json"),
+                    credibility=stored.credibility.model_dump(mode="json"),
+                    backtests=[
+                        backtest.model_dump(mode="json")
+                        for backtest in stored.backtests
+                    ],
+                    created_at=stored.created_at,
+                )
+                session.add(record)
+                session.flush()
+                created_at = record.created_at
+        except IntegrityError as error:
+            raise DomainValidationError(
+                f"calibration '{stored.calibration_id}' already exists"
+            ) from error
         return StoredCalibration(
             calibration_id=stored.calibration_id,
             dataset_id=stored.dataset_id,

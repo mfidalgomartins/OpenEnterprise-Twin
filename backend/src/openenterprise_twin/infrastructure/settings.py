@@ -47,7 +47,10 @@ class Settings(BaseSettings):
     trusted_hosts: tuple[str, ...] = _DEVELOPMENT_TRUSTED_HOSTS
     max_request_body_bytes: RequestBodyBytes = 4_194_304
     max_experiment_periods: ExperimentPeriods = 50_000
-    max_dataset_observations: DatasetObservations = 200_000
+    # Direct JSON uploads are gated first by max_request_body_bytes; this count
+    # cap is a reachable secondary guard within that body budget. Bulk history
+    # belongs on the file/database connectors, not a single JSON request.
+    max_dataset_observations: DatasetObservations = 30_000
     max_optimization_evaluations: OptimizationEvaluations = 400
     max_optimization_periods: ExperimentPeriods = 1_000_000
     max_adaptive_periods: ExperimentPeriods = 150_000

@@ -118,6 +118,10 @@ def upgrade() -> None:
             name=op.f("ck_decision_events_to_state"),
         ),
         sa.CheckConstraint(
+            f"from_state IS NULL OR from_state IN ({_DECISION_STATE_SQL})",
+            name=op.f("ck_decision_events_from_state"),
+        ),
+        sa.CheckConstraint(
             "sequence >= 1",
             name=op.f("ck_decision_events_sequence_positive"),
         ),

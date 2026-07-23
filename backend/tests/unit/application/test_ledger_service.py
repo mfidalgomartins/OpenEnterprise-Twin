@@ -17,6 +17,7 @@ from openenterprise_twin.domain.ledger import (
     ApprovalRecord,
     DecisionContent,
     DecisionEvidence,
+    DecisionTransition,
 )
 from openenterprise_twin.infrastructure.models import Base
 from openenterprise_twin.infrastructure.repositories import (
@@ -286,5 +287,33 @@ def test_duplicate_creation_conflicts(service: DecisionLedgerService) -> None:
             decision_id="dec-1",
             content=_content(),
             actor="cfo",
+            occurred_at=_now(),
+        )
+
+
+def test_repository_create_races_surface_as_conflict(
+    session_factory: sessionmaker[Session],
+) -> None:
+    # Bypass the service pre-check to exercise the repository's integrity guard,
+    # the path a genuine create-create race would take.
+    repository = SqlDecisionLedgerRepository(session_factory)
+    content = _content()
+    transition = DecisionTransition(
+        from_state=None,
+        to_state="draft",
+        actor="cfo",
+        occurred_at=_now(),
+    )
+    repository.create(
+        decision_id="dec-1",
+        content=content,
+        transition=transition,
+        occurred_at=_now(),
+    )
+    with pytest.raises(LedgerConflictError):
+        repository.create(
+            decision_id="dec-1",
+            content=content,
+            transition=transition,
             occurred_at=_now(),
         )
