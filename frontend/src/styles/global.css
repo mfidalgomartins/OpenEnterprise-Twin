@@ -73,7 +73,10 @@ a {
   display: grid;
   max-width: var(--content-maximum);
   min-height: 4rem;
-  grid-template-columns: max-content minmax(24rem, 1fr) max-content;
+  grid-template-areas:
+    "brand context"
+    "nav nav";
+  grid-template-columns: max-content minmax(0, 1fr);
   align-items: stretch;
   margin-inline: auto;
   padding-inline: var(--space-6);
@@ -87,12 +90,16 @@ a {
   text-decoration: none;
   font-size: 1.25rem;
   font-weight: 500;
+  grid-area: brand;
   letter-spacing: -0.025em;
   white-space: nowrap;
 }
 
 .primary-nav {
   min-width: 0;
+  min-height: 3rem;
+  grid-area: nav;
+  border-block-start: 0.0625rem solid var(--color-line);
 }
 
 .primary-nav__list {
@@ -146,6 +153,8 @@ a {
   display: flex;
   min-width: 0;
   align-items: stretch;
+  justify-self: end;
+  grid-area: context;
   color: var(--color-ink);
   font-size: var(--text-meta);
   font-variant-numeric: tabular-nums;
@@ -523,5 +532,347 @@ a {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+.jobs-page {
+  display: grid;
+  gap: var(--space-8);
+  padding-block: var(--space-12);
+}
+
+.jobs-page__header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--space-8);
+  padding-inline-start: var(--space-8);
+  border-inline-start: 0.25rem solid var(--color-comparison);
+}
+
+.jobs-page__header h1 {
+  margin: 0;
+  font-size: clamp(2rem, 5vw, 4.5rem);
+  font-weight: 500;
+  letter-spacing: -0.055em;
+  line-height: 0.95;
+}
+
+.jobs-page__header p {
+  max-width: 46rem;
+  margin: var(--space-3) 0 0;
+  color: var(--color-muted);
+}
+
+.jobs-page__eyebrow {
+  color: var(--color-comparison) !important;
+  font-size: var(--text-meta);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.jobs-page__signal {
+  display: grid;
+  min-width: 7rem;
+  padding: var(--space-4);
+  border: 0.0625rem solid var(--color-line);
+  border-radius: var(--radius-panel);
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  text-transform: uppercase;
+}
+
+.jobs-page__signal span {
+  color: var(--color-ink);
+  font-size: 2rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.jobs-filters {
+  display: flex;
+  align-items: end;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: 0.0625rem solid var(--color-line);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface);
+}
+
+.jobs-filters label {
+  display: grid;
+  gap: var(--space-1);
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  font-weight: 600;
+}
+
+.jobs-filters select {
+  min-height: 2.75rem;
+  padding-inline: var(--space-3);
+  border: 0.0625rem solid var(--color-line);
+  border-radius: var(--radius-control);
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+.jobs-filters__mine {
+  display: flex !important;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: var(--space-2) !important;
+  margin-inline-start: auto;
+  color: var(--color-ink) !important;
+}
+
+.jobs-filters__mine input {
+  width: 1.125rem;
+  height: 1.125rem;
+  accent-color: var(--color-decision);
+}
+
+.jobs-table-wrap {
+  overflow-x: auto;
+  border: 0.0625rem solid var(--color-line);
+  border-radius: var(--radius-panel);
+}
+
+.jobs-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--color-canvas);
+}
+
+.jobs-table caption {
+  position: absolute;
+  width: 0.0625rem;
+  height: 0.0625rem;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.jobs-table th,
+.jobs-table td {
+  padding: var(--space-4);
+  border-block-end: 0.0625rem solid var(--color-line);
+  text-align: start;
+  vertical-align: top;
+}
+
+.jobs-table thead th {
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.jobs-table tbody tr:last-child td {
+  border-block-end: 0;
+}
+
+.jobs-table__id {
+  display: block;
+  max-width: 16rem;
+  margin-block-start: var(--space-1);
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-status {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 17rem;
+  padding: var(--space-4);
+  border: 0.0625rem solid var(--color-line);
+  border-inline-start: 0.25rem solid var(--job-state-color);
+  border-radius: var(--radius-control);
+}
+
+.job-status--queued {
+  --job-state-color: var(--color-muted);
+}
+
+.job-status--running {
+  --job-state-color: var(--color-comparison);
+}
+
+.job-status--succeeded {
+  --job-state-color: var(--color-decision);
+}
+
+.job-status--failed,
+.job-status--cancelled {
+  --job-state-color: var(--color-risk);
+}
+
+.job-status__headline,
+.job-status__progress,
+.job-status__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.job-status__state {
+  font-weight: 700;
+}
+
+.job-status__stage,
+.job-status__attempt,
+.job-status__notice {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+
+.job-status__progress progress {
+  width: 100%;
+  height: 0.375rem;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  accent-color: var(--job-state-color);
+}
+
+.job-status__progress span {
+  min-width: 2.75rem;
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+.job-status__problem {
+  padding: var(--space-3);
+  border-radius: var(--radius-control);
+  background: color-mix(in oklch, var(--color-risk) 9%, transparent);
+}
+
+.job-status__problem p {
+  margin: 0 0 var(--space-1);
+}
+
+.job-status__problem code {
+  color: var(--color-risk);
+  font-size: var(--text-meta);
+}
+
+.job-action,
+.jobs-page__state button {
+  display: inline-flex;
+  min-height: 2.5rem;
+  align-items: center;
+  padding-inline: var(--space-3);
+  border: 0.0625rem solid var(--color-ink);
+  border-radius: var(--radius-control);
+  background: var(--color-ink);
+  color: var(--color-canvas);
+  cursor: pointer;
+  font-size: var(--text-meta);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.job-action--danger {
+  border-color: var(--color-risk);
+  background: transparent;
+  color: var(--color-risk);
+}
+
+.job-action:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.jobs-page__state {
+  margin: 0;
+  padding: var(--space-8);
+  border: 0.0625rem dashed var(--color-line);
+  border-radius: var(--radius-panel);
+  color: var(--color-muted);
+  text-align: center;
+}
+
+.jobs-page__state--error {
+  color: var(--color-risk);
+}
+
+@media (max-width: 48rem) {
+  .jobs-page__header,
+  .jobs-filters {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .jobs-filters__mine {
+    margin-inline-start: 0;
+  }
+
+  .jobs-table-wrap {
+    overflow: visible;
+    border: 0;
+  }
+
+  .jobs-table,
+  .jobs-table tbody {
+    display: block;
+  }
+
+  .jobs-table thead,
+  .jobs-table caption {
+    position: absolute;
+    width: 0.0625rem;
+    height: 0.0625rem;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .jobs-table tbody {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .jobs-table tbody tr {
+    display: grid;
+    overflow: hidden;
+    border: 0.0625rem solid var(--color-line);
+    border-radius: var(--radius-panel);
+    background: var(--color-canvas);
+  }
+
+  .jobs-table td,
+  .jobs-table tbody tr:last-child td {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: minmax(5.5rem, 0.35fr) minmax(0, 1fr);
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-block-end: 0.0625rem solid var(--color-line);
+  }
+
+  .jobs-table td:last-child,
+  .jobs-table tbody tr:last-child td:last-child {
+    border-block-end: 0;
+  }
+
+  .jobs-table td::before {
+    color: var(--color-muted);
+    content: attr(data-label);
+    font-size: var(--text-meta);
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .jobs-table__id,
+  .job-status {
+    min-width: 0;
+    max-width: 100%;
   }
 }

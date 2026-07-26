@@ -1,15 +1,15 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError } from "../../lib/api";
+import { useJob } from "../jobs/useJob";
+import type { Job } from "../jobs/types";
 import {
   createExperiment,
   createScenario,
-  getExperiment,
   getScenario,
 } from "./api";
 import { scenarioPayload } from "./scenarioDraft";
 import type {
-  ExperimentResource,
   ScenarioPayload,
   ScenarioResource,
 } from "./types";
@@ -55,12 +55,6 @@ const correctiveActions: Record<string, string> = {
   scenario_incompatible:
     "Review the highlighted lever limits and try again.",
 };
-
-function delay(milliseconds: number) {
-  return new Promise<void>((resolve) => {
-    window.setTimeout(resolve, milliseconds);
-  });
-}
 
 function immutableScenarioConflict(): RunIssue {
   return {
@@ -155,36 +149,17 @@ async function ensureScenario(scenario: ScenarioPayload) {
   }
 }
 
-function experimentFailure(experiment: ExperimentResource): RunIssue {
+function jobFailure(job: Job): RunIssue {
   return {
-    code: experiment.error_code ?? "experiment_execution",
-    detail: experiment.error_detail ?? "Experiment execution failed.",
+    code: job.problem?.code ?? `experiment_${job.status}`,
+    detail:
+      job.problem?.detail ??
+      (job.status === "cancelled"
+        ? "Experiment execution was cancelled."
+        : "Experiment execution failed."),
     correctiveAction:
       "Inputs remain saved. Review the model limits and retry the experiment.",
   };
-}
-
-async function waitForCompletion(
-  initial: ExperimentResource,
-  pollIntervalMs: number,
-) {
-  let experiment = initial;
-  const deadline = Date.now() + 15 * 60 * 1_000;
-  while (experiment.status === "queued" || experiment.status === "running") {
-    if (Date.now() >= deadline) {
-      throw {
-        code: "experiment_timeout",
-        detail: "Experiment did not complete within 15 minutes.",
-        correctiveAction: correctiveActions.experiment_timeout,
-      } satisfies RunIssue;
-    }
-    await delay(pollIntervalMs);
-    experiment = await getExperiment(experiment.id);
-  }
-  if (experiment.status === "failed") {
-    throw experimentFailure(experiment);
-  }
-  return experiment;
 }
 
 function toRunIssue(error: unknown): RunIssue {
@@ -214,11 +189,25 @@ function toRunIssue(error: unknown): RunIssue {
   };
 }
 
-export function useScenarioExperiment(pollIntervalMs = 500) {
+interface PendingCandidate {
+  candidate: ScenarioPayload;
+  idempotencyKey: string;
+  request: { iterations: number; max_workers: number; seed: number };
+}
+
+export function useScenarioExperiment() {
   const [phase, setPhase] = useState<ExperimentPhase>("idle");
   const [issue, setIssue] = useState<RunIssue | null>(null);
   const [lastCompleted, setLastCompleted] =
     useState<LastCompletedExperiment | null>(null);
+  const [activeJob, setActiveJob] = useState<Job | null>(null);
+  const [activeStep, setActiveStep] = useState<"baseline" | "candidate" | null>(
+    null,
+  );
+  const pendingCandidate = useRef<PendingCandidate | null>(null);
+  const transitioningJobId = useRef<string | null>(null);
+  const jobQuery = useJob(activeJob?.job_id ?? null, activeJob);
+  const observedJob = jobQuery.data ?? activeJob;
 
   const runScenario = useCallback(
     async ({
@@ -238,34 +227,115 @@ export function useScenarioExperiment(pollIntervalMs = 500) {
           request,
           `baseline-${baseline.schema_version}-${seed}-${iterations}`,
         );
-        await waitForCompletion(baselineExperiment, pollIntervalMs);
-
-        setPhase("saving_candidate");
-        await ensureScenario(candidate);
-        setPhase("running_candidate");
-        const candidateExperiment = await createExperiment(
-          candidate.scenario_id,
+        pendingCandidate.current = {
+          candidate,
+          idempotencyKey: `candidate-${candidate.scenario_id}-${seed}-${iterations}`,
           request,
-          `candidate-${candidate.scenario_id}-${seed}-${iterations}`,
-        );
-        const completed = await waitForCompletion(
-          candidateExperiment,
-          pollIntervalMs,
-        );
-        setLastCompleted({
-          experimentId: completed.id,
-          scenarioId: candidate.scenario_id,
-        });
-        setPhase("completed");
+        };
+        transitioningJobId.current = null;
+        setActiveStep("baseline");
+        setActiveJob(baselineExperiment);
       } catch (error) {
         setIssue(toRunIssue(error));
         setPhase("failed");
       }
     },
-    [pollIntervalMs],
+    [],
   );
 
+  useEffect(() => {
+    if (
+      !observedJob ||
+      !activeStep ||
+      transitioningJobId.current === observedJob.job_id
+    ) {
+      return;
+    }
+    let active = true;
+    const advance = async () => {
+      if (
+        observedJob.status === "failed" ||
+        observedJob.status === "cancelled"
+      ) {
+        transitioningJobId.current = observedJob.job_id;
+        if (active) {
+          setIssue(jobFailure(observedJob));
+          setPhase("failed");
+        }
+        return;
+      }
+      if (observedJob.status !== "succeeded") {
+        return;
+      }
+
+      transitioningJobId.current = observedJob.job_id;
+      if (activeStep === "candidate") {
+        const experimentId = Number(observedJob.result_resource_id);
+        const candidate = pendingCandidate.current?.candidate;
+        if (
+          !Number.isInteger(experimentId) ||
+          experimentId <= 0 ||
+          !candidate
+        ) {
+          if (active) {
+            setIssue({
+              code: "experiment_result_invalid",
+              detail: "The completed job did not return a valid experiment.",
+              correctiveAction:
+                "Open the Jobs workspace to inspect the durable result reference.",
+            });
+            setPhase("failed");
+          }
+          return;
+        }
+        pendingCandidate.current = null;
+        if (active) {
+          setLastCompleted({
+            experimentId,
+            scenarioId: candidate.scenario_id,
+          });
+          setActiveJob(null);
+          setActiveStep(null);
+          setPhase("completed");
+        }
+        return;
+      }
+
+      const pending = pendingCandidate.current;
+      if (!pending) {
+        throw new Error("candidate submission context is missing");
+      }
+      if (active) {
+        setPhase("saving_candidate");
+      }
+      await ensureScenario(pending.candidate);
+      if (active) {
+        setPhase("running_candidate");
+      }
+      const candidateJob = await createExperiment(
+        pending.candidate.scenario_id,
+        pending.request,
+        pending.idempotencyKey,
+      );
+      transitioningJobId.current = null;
+      if (active) {
+        setActiveStep("candidate");
+        setActiveJob(candidateJob);
+      }
+    };
+    void advance().catch((error: unknown) => {
+      if (active) {
+        setIssue(toRunIssue(error));
+        setPhase("failed");
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [activeStep, observedJob]);
+
   return {
+    activeJob: observedJob,
     isRunning: !["idle", "completed", "failed"].includes(phase),
     issue,
     lastCompleted,

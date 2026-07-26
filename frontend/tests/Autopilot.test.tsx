@@ -13,6 +13,11 @@ import {
   MonitoringCenterPage,
   OptimizationLabPage,
 } from "../src/features/autopilot/AutopilotPages";
+import {
+  clearApiAccessToken,
+  setApiAccessToken,
+} from "../src/lib/api";
+import { AuthenticatedTestSession } from "./testAuth";
 
 function jsonResponse(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -21,19 +26,49 @@ function jsonResponse(payload: unknown, status = 200) {
   });
 }
 
+function succeededJob(
+  kind: "optimization" | "adaptive_comparison",
+  jobId: string,
+) {
+  return {
+    job_id: jobId,
+    kind,
+    status: "succeeded",
+    created_by: "test-admin",
+    attempt_count: 1,
+    max_attempts: 3,
+    progress: 100,
+    stage: "completed",
+    cancellation_requested_at: null,
+    next_attempt_at: null,
+    result_resource_type: kind,
+    result_resource_id: "1",
+    result_digest: "a".repeat(64),
+    result_location: `/api/v1/jobs/${jobId}/result`,
+    problem: null,
+    created_at: "2026-07-23T00:00:00Z",
+    started_at: "2026-07-23T00:00:00Z",
+    finished_at: "2026-07-23T00:00:01Z",
+    updated_at: "2026-07-23T00:00:01Z",
+  };
+}
+
 function renderWithClient(element: ReactElement) {
   const location = memoryLocation();
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={queryClient}>
-      <Router hook={location.hook}>{element}</Router>
-    </QueryClientProvider>,
+    <AuthenticatedTestSession>
+      <QueryClientProvider client={queryClient}>
+        <Router hook={location.hook}>{element}</Router>
+      </QueryClientProvider>
+    </AuthenticatedTestSession>,
   );
 }
 
 afterEach(() => {
+  clearApiAccessToken();
   vi.unstubAllGlobals();
 });
 
@@ -79,10 +114,37 @@ describe("calibration studio", () => {
           return Promise.resolve(
             jsonResponse(
               {
-                calibration_id: "northstar-cal",
-                dataset_id: "northstar-history",
+                job_id: "calibration-job-1",
+                kind: "calibration",
+                status: "succeeded",
+                created_by: "test-admin",
+                attempt_count: 1,
+                max_attempts: 3,
+                progress: 100,
+                stage: "completed",
+                cancellation_requested_at: null,
+                next_attempt_at: null,
+                result_resource_type: "calibration",
+                result_resource_id: "northstar-history-cal",
+                result_digest: "a".repeat(64),
+                result_location: "/api/v1/jobs/calibration-job-1/result",
+                problem: null,
                 created_at: "2026-07-23T00:00:00Z",
-                calibration: {
+                started_at: "2026-07-23T00:00:00Z",
+                finished_at: "2026-07-23T00:00:01Z",
+                updated_at: "2026-07-23T00:00:01Z",
+              },
+              202,
+            ),
+          );
+        }
+        if (path.endsWith("/api/v1/jobs/calibration-job-1/result")) {
+          return Promise.resolve(
+            jsonResponse({
+              calibration_id: "northstar-cal",
+              dataset_id: "northstar-history",
+              created_at: "2026-07-23T00:00:00Z",
+              calibration: {
                   calibration_id: "northstar-cal",
                   company_model_version: "0.2.0",
                   window_start: "2024-01-01",
@@ -97,8 +159,8 @@ describe("calibration studio", () => {
                     },
                   ],
                   warnings: [],
-                },
-                credibility: {
+              },
+              credibility: {
                   calibration_id: "northstar-cal",
                   score: 91.8,
                   band: "decision_grade",
@@ -111,18 +173,16 @@ describe("calibration studio", () => {
                       detail: "quality 1.0",
                     },
                   ],
-                },
-                backtests: [
+              },
+              backtests: [
                   {
                     overall_weighted_mape: 0.11,
                     overall_interval_coverage: 0.9,
                     nominal_coverage: 0.95,
                     kpis: [],
                   },
-                ],
-              },
-              201,
-            ),
+              ],
+            }),
           );
         }
         return Promise.reject(new Error(`Unexpected request: ${path}`));
@@ -145,9 +205,8 @@ describe("calibration studio", () => {
   });
 
   it("imports a CSV file and profiles its quality", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn<typeof fetch>((input) => {
+    setApiAccessToken("browser-access-token");
+    const fetchMock = vi.fn<typeof fetch>((input) => {
         const path = String(input);
         if (path.includes("/api/v1/datasets/csv")) {
           return Promise.resolve(
@@ -175,8 +234,8 @@ describe("calibration studio", () => {
           );
         }
         return Promise.reject(new Error(`Unexpected request: ${path}`));
-      }),
-    );
+      });
+    vi.stubGlobal("fetch", fetchMock);
 
     renderWithClient(<CalibrationStudioPage />);
     const file = new File(
@@ -190,6 +249,14 @@ describe("calibration studio", () => {
     expect(
       screen.getByRole("button", { name: /export csv/i }),
     ).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/v1/datasets/csv"),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer browser-access-token",
+        }),
+      }),
+    );
   });
 
   it("surfaces a problem detail when a CSV import is rejected", async () => {
@@ -224,12 +291,112 @@ describe("optimization lab", () => {
     renderWithClient(<OptimizationLabPage />);
     expect(screen.getByText(/no frontier yet/i)).toBeVisible();
   });
+
+  it("loads the durable optimization result after job success", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input, init) => {
+        const path = String(input);
+        if (
+          path.endsWith("/api/v1/optimizations") &&
+          init?.method === "POST"
+        ) {
+          return Promise.resolve(
+            jsonResponse(succeededJob("optimization", "optimization-job"), 202),
+          );
+        }
+        if (path.endsWith("/api/v1/jobs/optimization-job/result")) {
+          const candidate = {
+            candidate_id: 7,
+            objective_values: { ebitda: 1_200_000, otif: 0.97 },
+            constraint_values: {},
+            feasible: true,
+            robustness: 0.92,
+            weighted_score: 1,
+            rank: 0,
+            exclusion_reason: null,
+          };
+          return Promise.resolve(
+            jsonResponse({
+              optimization_id: 1,
+              digest: "a".repeat(64),
+              evaluations: 12,
+              created_at: "2026-07-23T00:00:01Z",
+              result: {
+                frontier: [candidate],
+                recommended: candidate,
+                dominated: [],
+                infeasible: [],
+                sensitivity: [],
+                convergence: [],
+                evaluations: 12,
+                converged: true,
+                seed: 731,
+              },
+            }),
+          );
+        }
+        return Promise.reject(new Error(`Unexpected request: ${path}`));
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<OptimizationLabPage />);
+
+    await user.click(screen.getByRole("button", { name: "Run NSGA-II" }));
+
+    expect(await screen.findByText("Recommended")).toBeVisible();
+    expect(screen.getByText("12")).toBeVisible();
+  });
 });
 
 describe("adaptive policy builder", () => {
   it("renders the declarative rule preview", () => {
     renderWithClient(<AdaptivePolicyPage />);
     expect(screen.getByText(/backlog_days/i)).toBeVisible();
+  });
+
+  it("renders the durable adaptive comparison result", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input, init) => {
+        const path = String(input);
+        if (
+          path.endsWith("/api/v1/adaptive-policies/compare") &&
+          init?.method === "POST"
+        ) {
+          return Promise.resolve(
+            jsonResponse(
+              succeededJob("adaptive_comparison", "adaptive-job"),
+              202,
+            ),
+          );
+        }
+        if (path.endsWith("/api/v1/jobs/adaptive-job/result")) {
+          return Promise.resolve(
+            jsonResponse({
+              policy_id: "adaptive-capacity",
+              static_scenario_id: "static",
+              adaptive_scenario_id: "adaptive",
+              replications: 6,
+              master_seed: 731,
+              metric_deltas: { ebitda: 250_000, otif: 0.02 },
+              activation_count: 3,
+              total_action_cost_cents: 1_200_000,
+            }),
+          );
+        }
+        return Promise.reject(new Error(`Unexpected request: ${path}`));
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<AdaptivePolicyPage />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Compare vs static" }),
+    );
+
+    expect(await screen.findByText("Activations")).toBeVisible();
+    expect(screen.getByText("3")).toBeVisible();
   });
 });
 

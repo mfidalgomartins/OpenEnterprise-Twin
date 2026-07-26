@@ -87,14 +87,11 @@ export async function apiRequest<T>(
   path: string,
   options: ApiRequestOptions = {},
 ): Promise<T> {
-  if (!path.startsWith("/") || path.startsWith("//")) {
-    throw new TypeError("API paths must be same-origin relative paths");
-  }
   const { body, headers: headersInit, ...requestOptions } = options;
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+  const response = await apiFetch(path, {
     ...requestOptions,
     body: body === undefined ? undefined : JSON.stringify(body),
-    headers: requestHeaders(headersInit, body !== undefined),
+    headers: headersInit,
   });
   const contentType = response.headers.get("Content-Type") ?? "";
   const isJson = contentType.includes("json");
@@ -115,4 +112,20 @@ export async function apiRequest<T>(
   }
 
   return payload as T;
+}
+
+export function apiFetch(
+  path: string,
+  options: RequestInit = {},
+): Promise<Response> {
+  if (!path.startsWith("/") || path.startsWith("//")) {
+    throw new TypeError("API paths must be same-origin relative paths");
+  }
+  return fetch(`${apiBaseUrl}${path}`, {
+    ...options,
+    headers: requestHeaders(
+      options.headers,
+      options.body !== undefined && options.body !== null,
+    ),
+  });
 }

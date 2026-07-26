@@ -65,7 +65,7 @@ export function ScenarioBuilder() {
     queryFn: getCompanyReference,
     queryKey: ["company-reference"],
   });
-  const { isRunning, issue, lastCompleted, phase, runScenario } =
+  const { activeJob, isRunning, issue, lastCompleted, phase, runScenario } =
     useScenarioExperiment();
 
   useEffect(() => {
@@ -374,6 +374,7 @@ export function ScenarioBuilder() {
 
         <aside className="scenario-builder__rail">
           <ExperimentProgress
+            activeJob={activeJob}
             issue={issue}
             lastCompleted={lastCompleted}
             phase={phase}

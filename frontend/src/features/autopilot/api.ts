@@ -1,15 +1,16 @@
-import { ApiError, type ApiProblem, apiRequest } from "../../lib/api";
+import {
+  ApiError,
+  type ApiProblem,
+  apiFetch,
+  apiRequest,
+} from "../../lib/api";
+import type { Job } from "../jobs/types";
 import type {
-  AdaptiveComparison,
-  CalibrationResponse,
   DatasetIngestResponse,
   DecisionListItem,
   DecisionSnapshot,
   MonitoringReport,
-  OptimizationResponse,
 } from "./types";
-
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
 
 function problemFrom(response: Response, payload: unknown, fallback: string): ApiProblem {
   if (payload && typeof payload === "object" && "code" in payload) {
@@ -42,8 +43,8 @@ export async function ingestCsvDataset(
     dataset_id: datasetId,
     company_id: companyId,
   });
-  const response = await fetch(
-    `${apiBaseUrl}/api/v1/datasets/csv?${query.toString()}`,
+  const response = await apiFetch(
+    `/api/v1/datasets/csv?${query.toString()}`,
     {
       method: "POST",
       headers: { "Content-Type": "text/csv", Accept: "application/json" },
@@ -59,7 +60,7 @@ export async function ingestCsvDataset(
 
 export async function downloadDatasetCsv(datasetId: string): Promise<void> {
   const path = `/api/v1/datasets/${encodeURIComponent(datasetId)}/export.csv`;
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+  const response = await apiFetch(path, {
     headers: { Accept: "text/csv" },
   });
   if (!response.ok) {
@@ -82,7 +83,7 @@ export function runCalibration(
   datasetId: string,
   backtestCutoff: string | null,
 ) {
-  return apiRequest<CalibrationResponse>("/api/v1/calibrations", {
+  return apiRequest<Job>("/api/v1/calibrations", {
     method: "POST",
     body: {
       calibration_id: calibrationId,
@@ -106,7 +107,7 @@ export interface OptimizationInput {
 }
 
 export function runOptimization(input: OptimizationInput) {
-  return apiRequest<OptimizationResponse>("/api/v1/optimizations", {
+  return apiRequest<Job>("/api/v1/optimizations", {
     method: "POST",
     body: {
       config: {
@@ -165,7 +166,7 @@ export interface AdaptiveInput {
 }
 
 export function compareAdaptivePolicy(input: AdaptiveInput) {
-  return apiRequest<AdaptiveComparison>("/api/v1/adaptive-policies/compare", {
+  return apiRequest<Job>("/api/v1/adaptive-policies/compare", {
     method: "POST",
     body: {
       policy: {

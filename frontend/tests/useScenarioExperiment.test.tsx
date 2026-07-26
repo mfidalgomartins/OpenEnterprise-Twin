@@ -1,4 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { PropsWithChildren } from "react";
 
 import { useScenarioExperiment } from "../src/features/scenarios/useScenarioExperiment";
 import type {
@@ -87,22 +89,25 @@ test("does not normalize numeric-looking policy identifiers", async () => {
         return Promise.resolve(
           jsonResponse(
             {
-              id: path.includes("current-plan") ? 1 : 2,
-              scenario_id: path.includes("current-plan")
-                ? "current-plan"
-                : "numeric-identifier",
-              baseline_experiment_id: path.includes("current-plan") ? null : 1,
-              status: "completed",
-              seed: 731,
-              iterations: 1,
-              master_seed: 731,
-              replication_count: 1,
-              artifact_digest: "a".repeat(64),
-              error_code: null,
-              error_detail: null,
+              job_id: "baseline-job",
+              kind: "experiment",
+              status: "succeeded",
+              created_by: "test-admin",
+              attempt_count: 1,
+              max_attempts: 3,
+              progress: 100,
+              stage: "completed",
+              cancellation_requested_at: null,
+              next_attempt_at: null,
+              result_resource_type: "experiment",
+              result_resource_id: "1",
+              result_digest: "a".repeat(64),
+              result_location: "/api/v1/jobs/baseline-job/result",
+              problem: null,
               created_at: "2026-07-23T00:00:00Z",
               started_at: "2026-07-23T00:00:00Z",
-              completed_at: "2026-07-23T00:00:01Z",
+              finished_at: "2026-07-23T00:00:01Z",
+              updated_at: "2026-07-23T00:00:01Z",
             },
             202,
           ),
@@ -111,7 +116,17 @@ test("does not normalize numeric-looking policy identifiers", async () => {
       return Promise.reject(new Error(`Unexpected request: ${method} ${path}`));
     }),
   );
-  const { result } = renderHook(() => useScenarioExperiment(0));
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  function wrapper({ children }: PropsWithChildren) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    );
+  }
+  const { result } = renderHook(() => useScenarioExperiment(), { wrapper });
 
   await act(async () => {
     await result.current.runScenario({

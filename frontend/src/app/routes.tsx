@@ -20,6 +20,7 @@ import { ExecutiveReportPage } from "../features/reports/ExecutiveReportPage";
 import { AccessDenied } from "../features/auth/AccessDenied";
 import { CallbackPage } from "../features/auth/CallbackPage";
 import { useAuth, type Role } from "../features/auth/authContext";
+import { JobsPage } from "../features/jobs/JobsPage";
 import { ScenarioComparePage } from "../features/scenarios/ScenarioComparePage";
 import { ScenarioBuilder } from "../features/scenarios/ScenarioBuilder";
 import { AppShell } from "./AppShell";
@@ -71,6 +72,7 @@ export function AppRoutes() {
           </RequireRole>
         </Route>
         <Route path="/monitoring" component={MonitoringCenterPage} />
+        <Route path="/jobs" component={JobsPage} />
         <Route path="/reports/:experimentId" component={ExecutiveReportPage} />
         <Route path="/reports" component={ReportsPage} />
         <Route component={NotFoundPage} />

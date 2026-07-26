@@ -1,5 +1,7 @@
 import { Link } from "wouter";
 
+import { JobStatus } from "../jobs/JobStatus";
+import type { Job } from "../jobs/types";
 import type {
   ExperimentPhase,
   LastCompletedExperiment,
@@ -17,12 +19,14 @@ const phaseMessages: Record<ExperimentPhase, string> = {
 };
 
 interface ExperimentProgressProps {
+  activeJob: Job | null | undefined;
   issue: RunIssue | null;
   lastCompleted: LastCompletedExperiment | null;
   phase: ExperimentPhase;
 }
 
 export function ExperimentProgress({
+  activeJob,
   issue,
   lastCompleted,
   phase,
@@ -33,6 +37,13 @@ export function ExperimentProgress({
       <div aria-atomic="true" aria-live="polite" role="status">
         <p>{phaseMessages[phase]}</p>
       </div>
+
+      {activeJob ? (
+        <div className="experiment-progress__job">
+          <JobStatus job={activeJob} />
+          <Link href="/jobs">Manage jobs</Link>
+        </div>
+      ) : null}
 
       {issue ? (
         <div className="experiment-progress__error" role="alert">

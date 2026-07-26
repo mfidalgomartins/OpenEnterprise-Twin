@@ -108,6 +108,7 @@ export function AppShell({ children }: PropsWithChildren) {
       "/adaptive": "Adaptive policy builder",
       "/ledger": "Decision ledger",
       "/monitoring": "Monitoring center",
+      "/jobs": "Analytical jobs",
     };
     const title =
       titleByPath[pathname] ??
