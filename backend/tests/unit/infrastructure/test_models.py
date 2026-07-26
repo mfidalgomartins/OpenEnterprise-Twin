@@ -252,6 +252,10 @@ def test_every_business_table_has_tenant_ownership_and_same_tenant_links() -> No
             ("experiments.tenant_id", "experiments.id"),
         ),
         (
+            ("experiments", "tenant_id", "source_job_id"),
+            ("jobs.tenant_id", "jobs.job_id"),
+        ),
+        (
             ("decision_events", "tenant_id", "decision_id"),
             ("decisions.tenant_id", "decisions.decision_id"),
         ),

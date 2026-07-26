@@ -33,6 +33,12 @@ def test_migrated_postgres_runs_a_durable_experiment(tmp_path: Path) -> None:
             artifact_directory=tmp_path / "postgres-artifacts",
             experiment_workers=1,
             replication_workers_per_experiment=1,
+            job_worker_mode="embedded",
+            job_workers=1,
+            job_poll_interval_seconds=0.01,
+            job_lease_seconds=2,
+            job_heartbeat_seconds=0.25,
+            job_retry_delay_seconds=0,
             _env_file=None,
         )
     )
@@ -54,11 +60,15 @@ def test_migrated_postgres_runs_a_durable_experiment(tmp_path: Path) -> None:
         while monotonic() < deadline:
             result = client.get(location)
             assert result.status_code == 200
-            if result.json()["status"] in {"completed", "failed"}:
+            if result.json()["status"] in {
+                "succeeded",
+                "failed",
+                "cancelled",
+            }:
                 break
             sleep(0.05)
         else:
             raise AssertionError("PostgreSQL experiment did not terminate")
 
-    assert result.json()["status"] == "completed"
-    assert result.json()["artifact_digest"]
+    assert result.json()["status"] == "succeeded"
+    assert result.json()["result_digest"]

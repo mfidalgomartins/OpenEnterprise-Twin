@@ -79,6 +79,12 @@ def test_run_demo_creates_paired_experiments_and_reproducibility_output(
         artifact_directory=tmp_path / "artifacts",
         experiment_workers=1,
         replication_workers_per_experiment=1,
+        job_worker_mode="embedded",
+        job_workers=1,
+        job_poll_interval_seconds=0.01,
+        job_lease_seconds=2,
+        job_heartbeat_seconds=0.25,
+        job_retry_delay_seconds=0,
     )
     app = create_app(settings)
 
@@ -134,6 +140,12 @@ def test_run_autopilot_demo_drives_the_full_loop(tmp_path: Path) -> None:
         artifact_directory=tmp_path / "artifacts",
         experiment_workers=1,
         replication_workers_per_experiment=1,
+        job_worker_mode="embedded",
+        job_workers=1,
+        job_poll_interval_seconds=0.01,
+        job_lease_seconds=2,
+        job_heartbeat_seconds=0.25,
+        job_retry_delay_seconds=0,
         max_optimization_evaluations=120,
     )
     analyst_app = create_app(

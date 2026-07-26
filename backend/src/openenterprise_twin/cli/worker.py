@@ -16,6 +16,7 @@ from openenterprise_twin.infrastructure.database import (
 from openenterprise_twin.infrastructure.runner import (
     DurableJobWorker,
     EmbeddedJobWorkerPool,
+    backfill_active_experiment_jobs,
     build_analytical_job_handlers,
     build_worker_id,
 )
@@ -75,6 +76,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
     try:
+        backfill_active_experiment_jobs(session_factory)
         pool.start()
         logger.info("durable analytical worker started")
         stop.wait()

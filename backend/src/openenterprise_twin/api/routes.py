@@ -14,6 +14,11 @@ from openenterprise_twin.api.dependencies import (
     reader_guard,
 )
 from openenterprise_twin.api.errors import ApiProblemError
+from openenterprise_twin.api.jobs import (
+    JobRead,
+    idempotency_conflict,
+    set_job_response,
+)
 from openenterprise_twin.api.schemas import (
     ExperimentCreate,
     ExperimentRead,
@@ -25,7 +30,10 @@ from openenterprise_twin.application.decisions import (
     get_or_build_brief,
     get_or_build_comparison,
 )
-from openenterprise_twin.application.experiments import ExperimentQueueFullError
+from openenterprise_twin.application.jobs import (
+    JobConflictError,
+    SubmitJob,
+)
 from openenterprise_twin.application.portfolio import (
     DecisionPortfolio,
     PolicyFrontier,
@@ -38,6 +46,7 @@ from openenterprise_twin.domain.scenario import (
     Scenario,
     validate_scenario_against_company,
 )
+from openenterprise_twin.infrastructure.jobs import SqlJobRepository
 from openenterprise_twin.infrastructure.models import ExperimentRecord
 from openenterprise_twin.infrastructure.repositories import (
     ExperimentRepository,
@@ -152,7 +161,7 @@ def get_scenario(
 
 @router.post(
     "/scenarios/{scenario_id}/experiments",
-    response_model=ExperimentRead,
+    response_model=JobRead,
     status_code=status.HTTP_202_ACCEPTED,
     dependencies=[Security(analyst_guard)],
 )
@@ -162,81 +171,77 @@ def create_experiment(
     response: Response,
     session: SessionDependency,
     services: ServicesDependency,
+    principal: PrincipalDependency,
     idempotency_key: IdempotencyKey = None,
-) -> ExperimentRead:
+) -> JobRead:
     scenarios = ScenarioRepository(session, services.tenant_id)
     experiments = ExperimentRepository(session, services.tenant_id)
-    created = False
-    with session.begin():
-        scenario_record = scenarios.get(scenario_id)
-        if scenario_record is None:
-            raise _scenario_not_found(scenario_id)
-        request_payload = request.model_dump(mode="json")
-        existing = (
-            experiments.get_by_idempotency_key(idempotency_key)
-            if idempotency_key is not None
-            else None
-        )
-        if existing is not None:
-            if (
-                existing.scenario_id != scenario_id
-                or existing.request_payload != request_payload
-            ):
-                raise ApiProblemError(
-                    status=409,
-                    code="idempotency_conflict",
-                    title="Idempotency key conflict",
-                    detail="The idempotency key was used for a different request.",
-                )
-            record = existing
-        else:
-            scenario = Scenario.model_validate(scenario_record.payload)
-            requested_periods = request.replications * scenario.horizon_days
-            if requested_periods > services.max_experiment_periods:
-                raise ApiProblemError(
-                    status=422,
-                    code="experiment_budget_exceeded",
-                    title="Experiment compute budget exceeded",
-                    detail=(
-                        f"This request needs {requested_periods:,} simulated "
-                        f"periods; the deployment limit is "
-                        f"{services.max_experiment_periods:,}. Reduce the "
-                        "replication count or scenario horizon."
-                    ),
-                )
-            baseline_experiment_id = _resolve_baseline_experiment_id(
-                scenario,
-                experiments=experiments,
-                request=request,
+    jobs = SqlJobRepository(services.session_factory, services.tenant_id)
+    try:
+        with session.begin():
+            scenario_record = scenarios.get(scenario_id)
+            if scenario_record is None:
+                raise _scenario_not_found(scenario_id)
+            request_payload = request.model_dump(mode="json")
+            existing = (
+                experiments.get_by_idempotency_key(idempotency_key)
+                if idempotency_key is not None
+                else None
             )
-            record = experiments.create(
-                scenario_id=scenario_id,
-                baseline_experiment_id=baseline_experiment_id,
-                master_seed=request.master_seed,
-                replication_count=request.replications,
-                idempotency_key=idempotency_key,
-                request_payload=request_payload,
+            if existing is not None:
+                if (
+                    existing.scenario_id != scenario_id
+                    or existing.request_payload != request_payload
+                ):
+                    raise idempotency_conflict()
+                record = existing
+            else:
+                scenario = Scenario.model_validate(scenario_record.payload)
+                requested_periods = (
+                    request.replications * scenario.horizon_days
+                )
+                if requested_periods > services.max_experiment_periods:
+                    raise ApiProblemError(
+                        status=422,
+                        code="experiment_budget_exceeded",
+                        title="Experiment compute budget exceeded",
+                        detail=(
+                            f"This request needs {requested_periods:,} simulated "
+                            f"periods; the deployment limit is "
+                            f"{services.max_experiment_periods:,}. Reduce the "
+                            "replication count or scenario horizon."
+                        ),
+                    )
+                baseline_experiment_id = _resolve_baseline_experiment_id(
+                    scenario,
+                    experiments=experiments,
+                    request=request,
+                )
+                record = experiments.create(
+                    scenario_id=scenario_id,
+                    baseline_experiment_id=baseline_experiment_id,
+                    master_seed=request.master_seed,
+                    replication_count=request.replications,
+                    idempotency_key=idempotency_key,
+                    request_payload=request_payload,
+                )
+            submission = jobs.submit_in_session(
+                session,
+                SubmitJob(
+                    kind="experiment",
+                    created_by=principal.subject,
+                    request_payload={"experiment_id": record.id},
+                    idempotency_key=idempotency_key,
+                ),
             )
-            created = True
-        payload = _experiment_read(record)
-
-    if created:
-        try:
-            services.experiment_runner.submit(record.id, services.tenant_id)
-        except ExperimentQueueFullError as error:
-            with session.begin():
-                queued_record = experiments.get(record.id)
-                if queued_record is not None:
-                    experiments.delete_queued(queued_record)
-            raise ApiProblemError(
-                status=429,
-                code="experiment_queue_full",
-                title="Experiment queue is full",
-                detail="Retry the request after an active experiment completes.",
-            ) from error
-
-    response.headers["Location"] = f"/api/v1/experiments/{record.id}"
-    return payload
+            if record.source_job_id is None:
+                record.source_job_id = submission.job.job_id
+                session.flush()
+            elif record.source_job_id != submission.job.job_id:
+                raise idempotency_conflict()
+    except JobConflictError as error:
+        raise idempotency_conflict() from error
+    return set_job_response(response, submission.job)
 
 
 @router.get("/experiments/{experiment_id}", response_model=ExperimentRead)

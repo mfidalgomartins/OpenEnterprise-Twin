@@ -33,8 +33,10 @@ from openenterprise_twin.application.job_handlers import (
 )
 from openenterprise_twin.application.jobs import (
     Job,
+    JobConflictError,
     JobLeaseError,
     JobProblem,
+    SubmitJob,
     validate_worker_id,
 )
 from openenterprise_twin.domain.errors import (
@@ -448,6 +450,51 @@ def job_queue_snapshot(
         stale_leases=int(stale or 0),
         oldest_queued_age_seconds=age,
     )
+
+
+def backfill_active_experiment_jobs(
+    session_factory: sessionmaker[Session],
+) -> int:
+    """Attach pre-v0.6 active experiments to the recoverable SQL job queue."""
+
+    created = 0
+    with session_factory.begin() as session:
+        statement = (
+            select(ExperimentRecord)
+            .where(
+                ExperimentRecord.status.in_(("queued", "running")),
+                ExperimentRecord.source_job_id.is_(None),
+            )
+            .order_by(
+                ExperimentRecord.tenant_id,
+                ExperimentRecord.created_at,
+                ExperimentRecord.id,
+            )
+        )
+        if session.bind is not None and session.bind.dialect.name == "postgresql":
+            statement = statement.with_for_update(skip_locked=True)
+        active = tuple(session.scalars(statement))
+        for experiment in active:
+            repository = SqlJobRepository(
+                session_factory,
+                experiment.tenant_id,
+            )
+            try:
+                submission = repository.submit_in_session(
+                    session,
+                    SubmitJob(
+                        kind="experiment",
+                        created_by="system-recovery",
+                        request_payload={"experiment_id": experiment.id},
+                        idempotency_key=experiment.idempotency_key,
+                    ),
+                )
+            except JobConflictError:
+                continue
+            experiment.source_job_id = submission.job.job_id
+            session.flush()
+            created += 1
+    return created
 
 
 def _worker_now(value: datetime | None) -> datetime:

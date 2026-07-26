@@ -178,6 +178,11 @@ class ExperimentRecord(Base):
             "idempotency_key",
             name="uq_experiments_tenant_id_idempotency_key",
         ),
+        UniqueConstraint(
+            "tenant_id",
+            "source_job_id",
+            name="uq_experiments_tenant_source_job_id",
+        ),
         ForeignKeyConstraint(
             ("tenant_id", "scenario_id"),
             ("scenarios.tenant_id", "scenarios.scenario_id"),
@@ -190,6 +195,12 @@ class ExperimentRecord(Base):
             name="fk_experiments_tenant_baseline",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ("tenant_id", "source_job_id"),
+            ("jobs.tenant_id", "jobs.job_id"),
+            name="fk_experiments_tenant_source_job",
+            ondelete="RESTRICT",
+        ),
         Index("ix_experiments_scenario_id", "tenant_id", "scenario_id"),
         Index(
             "ix_experiments_baseline_experiment_id",
@@ -197,6 +208,11 @@ class ExperimentRecord(Base):
             "baseline_experiment_id",
         ),
         Index("ix_experiments_status", "tenant_id", "status"),
+        Index(
+            "ix_experiments_source_job_id",
+            "tenant_id",
+            "source_job_id",
+        ),
         Index(
             "ix_experiments_baseline_lookup",
             "tenant_id",
@@ -231,6 +247,10 @@ class ExperimentRecord(Base):
     )
     baseline_experiment_id: Mapped[int | None] = mapped_column(
         _identity_type(),
+        nullable=True,
+    )
+    source_job_id: Mapped[str | None] = mapped_column(
+        String(36),
         nullable=True,
     )
     status: Mapped[ExperimentStatus] = mapped_column(

@@ -60,20 +60,7 @@ class SqlJobRepository:
             if existing is not None:
                 return self._replay_or_conflict(existing, command)
 
-        record = JobRecord(
-            job_id=str(uuid4()),
-            tenant_id=self._tenant_id,
-            kind=command.kind,
-            status="queued",
-            created_by=command.created_by,
-            request_payload=dict(command.request_payload),
-            request_digest=command.request_digest,
-            idempotency_key=command.idempotency_key,
-            attempt_count=0,
-            max_attempts=command.max_attempts,
-            progress=0,
-            stage="queued",
-        )
+        record = self._new_record(command)
         try:
             with self._session_factory.begin() as session:
                 session.add(record)
@@ -90,6 +77,28 @@ class SqlJobRepository:
                 raise
             return self._replay_or_conflict(existing, command)
         return JobSubmission(job=job, created=True)
+
+    def submit_in_session(
+        self,
+        session: Session,
+        command: SubmitJob,
+    ) -> JobSubmission:
+        """Submit inside a caller-owned transaction with related resources."""
+
+        if command.idempotency_key is not None:
+            existing = session.scalar(
+                select(JobRecord).where(
+                    JobRecord.tenant_id == self._tenant_id,
+                    JobRecord.kind == command.kind,
+                    JobRecord.idempotency_key == command.idempotency_key,
+                )
+            )
+            if existing is not None:
+                return self._replay_or_conflict(existing, command)
+        record = self._new_record(command)
+        session.add(record)
+        session.flush()
+        return JobSubmission(job=_to_job(record), created=True)
 
     def get(self, job_id: str) -> Job | None:
         with self._session_factory() as session:
@@ -112,6 +121,8 @@ class SqlJobRepository:
     ) -> tuple[Job, ...]:
         if not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
+        if (before_created_at is None) != (before_job_id is None):
+            raise ValueError("both job cursor fields must be supplied together")
         statement: Select[tuple[JobRecord]] = select(JobRecord).where(
             JobRecord.tenant_id == self._tenant_id
         )
@@ -121,10 +132,7 @@ class SqlJobRepository:
             statement = statement.where(JobRecord.kind.in_(kinds))
         if before_created_at is not None:
             boundary = _aware_utc(before_created_at, name="before_created_at")
-            if before_job_id is None:
-                raise ValueError(
-                    "before_job_id is required with before_created_at"
-                )
+            assert before_job_id is not None
             statement = statement.where(
                 or_(
                     JobRecord.created_at < boundary,
@@ -474,6 +482,22 @@ class SqlJobRepository:
             if record is not None:
                 session.expunge(record)
             return record
+
+    def _new_record(self, command: SubmitJob) -> JobRecord:
+        return JobRecord(
+            job_id=str(uuid4()),
+            tenant_id=self._tenant_id,
+            kind=command.kind,
+            status="queued",
+            created_by=command.created_by,
+            request_payload=dict(command.request_payload),
+            request_digest=command.request_digest,
+            idempotency_key=command.idempotency_key,
+            attempt_count=0,
+            max_attempts=command.max_attempts,
+            progress=0,
+            stage="queued",
+        )
 
     @staticmethod
     def _replay_or_conflict(

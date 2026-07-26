@@ -18,7 +18,6 @@ from openenterprise_twin.application.decision_loop import (
     MonitoringService,
     OptimizationLabService,
 )
-from openenterprise_twin.application.experiments import ExperimentRunner
 from openenterprise_twin.application.identity import (
     AuthenticationError,
     IdentityProvider,
@@ -48,7 +47,6 @@ bearer_scheme = HTTPBearer(auto_error=False)
 class AppInfrastructure:
     session_factory: sessionmaker[Session]
     artifact_store: ArtifactReader
-    experiment_runner: ExperimentRunner
     max_experiment_periods: int
     max_adaptive_periods: int
 
@@ -59,7 +57,6 @@ class AppServices:
     session_factory: sessionmaker[Session]
     artifact_store: ArtifactReader
     decision_repository: DecisionEvidenceRepository
-    experiment_runner: ExperimentRunner
     calibration_studio: CalibrationStudioService
     optimization_lab: OptimizationLabService
     monitoring: MonitoringService
@@ -176,7 +173,6 @@ def get_services(
             infrastructure.session_factory,
             principal.tenant_id,
         ),
-        experiment_runner=infrastructure.experiment_runner,
         calibration_studio=CalibrationStudioService(
             datasets=dataset_repository,
             calibrations=calibration_repository,

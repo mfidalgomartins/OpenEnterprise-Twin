@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
+from openenterprise_twin.api.jobs import JobRead
 from openenterprise_twin.api.schemas import (
     ExperimentCreate,
     ExperimentRead,
@@ -328,25 +329,32 @@ def _submit_and_wait(
         headers={"Idempotency-Key": idempotency_key},
     )
     _raise_for_status(response)
-    experiment = ExperimentRead.model_validate(response.json())
+    job = JobRead.model_validate(response.json())
+    location = response.headers.get("location", f"/api/v1/jobs/{job.job_id}")
     deadline = monotonic() + timeout_seconds
-    while experiment.status not in {"completed", "failed"}:
+    while job.status not in {"succeeded", "failed", "cancelled"}:
         if monotonic() >= deadline:
             raise DemoError(
-                f"experiment '{experiment.id}' did not complete within "
+                f"job '{job.job_id}' did not complete within "
                 f"{timeout_seconds:g} seconds"
             )
         if poll_interval_seconds:
             sleep(poll_interval_seconds)
-        response = client.get(f"/api/v1/experiments/{experiment.id}")
+        response = client.get(location)
         _raise_for_status(response)
-        experiment = ExperimentRead.model_validate(response.json())
-    if experiment.status == "failed":
+        job = JobRead.model_validate(response.json())
+    if job.status != "succeeded" or job.result_resource_id is None:
+        problem = job.problem or {}
         raise DemoError(
-            f"experiment '{experiment.id}' failed with "
-            f"{experiment.error_code}: {experiment.error_detail}"
+            f"job '{job.job_id}' failed with "
+            f"{problem.get('code', job.status)}: "
+            f"{problem.get('detail', 'No result was produced.')}"
         )
-    return experiment
+    response = client.get(
+        f"/api/v1/experiments/{job.result_resource_id}"
+    )
+    _raise_for_status(response)
+    return ExperimentRead.model_validate(response.json())
 
 
 def run_autopilot_demo(
@@ -362,7 +370,7 @@ def run_autopilot_demo(
         "/api/v1/datasets/synthetic",
         {"dataset_id": "northstar-history", "days": 540},
     )
-    calibration = _post_json(
+    calibration = _post_job_result(
         client,
         "/api/v1/calibrations",
         {
@@ -371,7 +379,7 @@ def run_autopilot_demo(
             "backtest_cutoff": "2024-12-31",
         },
     )
-    optimization = _post_json(
+    optimization = _post_job_result(
         client,
         "/api/v1/optimizations",
         {
@@ -563,6 +571,38 @@ def _post_json(
     if not isinstance(payload, dict):
         raise DemoError(f"unexpected non-object response from {path}")
     return payload
+
+
+def _post_job_result(
+    client: httpx.Client,
+    path: str,
+    body: dict[str, object],
+    *,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    poll_interval_seconds: float = 0.05,
+) -> dict[str, Any]:
+    response = client.post(path, json=body)
+    _raise_for_status(response)
+    job = JobRead.model_validate(response.json())
+    location = response.headers.get("location", f"/api/v1/jobs/{job.job_id}")
+    deadline = monotonic() + timeout_seconds
+    while job.status not in {"succeeded", "failed", "cancelled"}:
+        if monotonic() >= deadline:
+            raise DemoError(
+                f"job '{job.job_id}' did not complete within "
+                f"{timeout_seconds:g} seconds"
+            )
+        if poll_interval_seconds:
+            sleep(poll_interval_seconds)
+        job = JobRead.model_validate(_get_json(client, location))
+    if job.status != "succeeded" or job.result_location is None:
+        problem = job.problem or {}
+        raise DemoError(
+            f"job '{job.job_id}' failed with "
+            f"{problem.get('code', job.status)}: "
+            f"{problem.get('detail', 'No result was produced.')}"
+        )
+    return _get_json(client, job.result_location)
 
 
 def _get_json(client: httpx.Client, path: str) -> dict[str, Any]:

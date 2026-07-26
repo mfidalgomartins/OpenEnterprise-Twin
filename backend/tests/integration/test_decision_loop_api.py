@@ -1,6 +1,7 @@
 """End-to-end contracts for the governed decision-loop API."""
 
 from pathlib import Path
+from time import monotonic, sleep
 
 from fastapi.testclient import TestClient
 
@@ -15,6 +16,13 @@ def _settings(tmp_path: Path, **overrides: object) -> Settings:
         database_url=f"sqlite+pysqlite:///{tmp_path / 'loop.db'}",
         artifact_directory=tmp_path / "artifacts",
         experiment_workers=1,
+        replication_workers_per_experiment=1,
+        job_worker_mode="embedded",
+        job_workers=1,
+        job_poll_interval_seconds=0.01,
+        job_lease_seconds=2,
+        job_heartbeat_seconds=0.25,
+        job_retry_delay_seconds=0,
         database_pool_size=2,
         database_max_overflow=0,
         max_optimization_evaluations=60,
@@ -37,6 +45,25 @@ def _client(
             )
         )
     )
+
+
+def _wait_for_job_result(
+    client: TestClient,
+    location: str,
+) -> dict[str, object]:
+    deadline = monotonic() + 20
+    while monotonic() < deadline:
+        response = client.get(location)
+        assert response.status_code == 200
+        job = response.json()
+        if job["status"] == "succeeded":
+            result = client.get(job["result_location"])
+            assert result.status_code == 200
+            return result.json()
+        if job["status"] in {"failed", "cancelled"}:
+            raise AssertionError(f"job failed: {job['problem']}")
+        sleep(0.02)
+    raise AssertionError("job did not terminate")
 
 
 def _decision_content() -> dict[str, object]:
@@ -72,11 +99,15 @@ def test_calibration_studio_flow(tmp_path: Path) -> None:
                 "backtest_cutoff": "2024-12-31",
             },
         )
-        assert calibrate.status_code == 201
-        credibility = calibrate.json()["credibility"]
+        assert calibrate.status_code == 202
+        calibration = _wait_for_job_result(
+            client,
+            calibrate.headers["location"],
+        )
+        credibility = calibration["credibility"]
         assert credibility["band"] == "decision_grade"
         assert credibility["score"] >= 80.0
-        assert calibrate.json()["backtests"]
+        assert calibration["backtests"]
 
 
 def test_synthetic_ingestion_respects_observation_cap(tmp_path: Path) -> None:
@@ -172,8 +203,8 @@ def test_optimization_flow_and_budget_cap(tmp_path: Path) -> None:
                 "master_seed": 5,
             },
         )
-        assert response.status_code == 201
-        payload = response.json()
+        assert response.status_code == 202
+        payload = _wait_for_job_result(client, response.headers["location"])
         assert payload["result"]["frontier"]
         assert payload["evaluations"] <= 40
 

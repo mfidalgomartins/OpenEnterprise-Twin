@@ -10,15 +10,20 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query, Request, Response, Security, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    Query,
+    Request,
+    Response,
+    Security,
+    status,
+)
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from openenterprise_twin.analytics.adaptive import (
-    AdaptiveComparison,
-    AdaptivePolicy,
-    compare_adaptive_vs_static,
-)
+from openenterprise_twin.analytics.adaptive import AdaptivePolicy
 from openenterprise_twin.analytics.backtesting import BacktestResult
 from openenterprise_twin.analytics.calibration import CalibrationResult
 from openenterprise_twin.analytics.credibility import CredibilityScore
@@ -47,20 +52,33 @@ from openenterprise_twin.analytics.synthetic import generate_northstar_history
 from openenterprise_twin.api.dependencies import (
     AppServices,
     PrincipalDependency,
+    SettingsDependency,
     analyst_guard,
     authorize_principal,
     get_services,
     reader_guard,
 )
 from openenterprise_twin.api.errors import ApiProblemError
+from openenterprise_twin.api.jobs import (
+    JobRead,
+    set_job_response,
+    submit_job,
+)
 from openenterprise_twin.application.decision_loop import (
     DatasetTooLargeError,
     StoredDataset,
 )
+from openenterprise_twin.application.job_handlers import (
+    AdaptiveComparisonJobRequest,
+    CalibrationJobRequest,
+    OptimizationJobRequest,
+)
+from openenterprise_twin.application.jobs import SubmitJob
 from openenterprise_twin.application.ledger import (
     DecisionListItem,
     DecisionSnapshot,
 )
+from openenterprise_twin.domain.errors import DomainValidationError
 from openenterprise_twin.domain.ledger import (
     ApprovalRecord,
     DecisionContent,
@@ -68,16 +86,18 @@ from openenterprise_twin.domain.ledger import (
     DecisionState,
     DecisionTransition,
 )
-from openenterprise_twin.simulation.reference import (
-    build_baseline_scenario,
-    build_northstar_company,
-)
+from openenterprise_twin.infrastructure.jobs import SqlJobRepository
+from openenterprise_twin.simulation.reference import build_northstar_company
 
 decision_loop_router = APIRouter(
     prefix="/api/v1",
     dependencies=[Security(reader_guard)],
 )
 ServicesDependency = Annotated[AppServices, Depends(get_services)]
+JobIdempotencyKey = Annotated[
+    str | None,
+    Header(alias="Idempotency-Key", min_length=1, max_length=128),
+]
 
 
 class LoopModel(BaseModel):
@@ -266,30 +286,36 @@ def _ingest(services: AppServices, dataset: HistoricalDataset) -> StoredDataset:
 
 @decision_loop_router.post(
     "/calibrations",
-    response_model=CalibrationResponse,
-    status_code=status.HTTP_201_CREATED,
+    response_model=JobRead,
+    status_code=status.HTTP_202_ACCEPTED,
     dependencies=[Security(analyst_guard)],
 )
 def create_calibration(
     request: CalibrationRequest,
     response: Response,
     services: ServicesDependency,
-) -> CalibrationResponse:
-    stored = services.calibration_studio.calibrate(
+    principal: PrincipalDependency,
+    idempotency_key: JobIdempotencyKey = None,
+) -> JobRead:
+    if services.calibration_studio.get_dataset(request.dataset_id) is None:
+        raise DomainValidationError(
+            f"dataset '{request.dataset_id}' does not exist"
+        )
+    payload = CalibrationJobRequest(
         calibration_id=request.calibration_id,
         dataset_id=request.dataset_id,
-        company=build_northstar_company(),
         backtest_cutoff=request.backtest_cutoff,
+    ).model_dump(mode="json")
+    submission = submit_job(
+        SqlJobRepository(services.session_factory, services.tenant_id),
+        SubmitJob(
+            kind="calibration",
+            created_by=principal.subject,
+            request_payload=payload,
+            idempotency_key=idempotency_key,
+        ),
     )
-    response.headers["Location"] = f"/api/v1/calibrations/{stored.calibration_id}"
-    return CalibrationResponse(
-        calibration_id=stored.calibration_id,
-        dataset_id=stored.dataset_id,
-        created_at=stored.created_at,
-        calibration=stored.calibration,
-        credibility=stored.credibility,
-        backtests=stored.backtests,
-    )
+    return set_job_response(response, submission.job)
 
 
 # --- Optimization Lab ----------------------------------------------------------
@@ -312,32 +338,49 @@ class OptimizationResponse(LoopModel):
 
 @decision_loop_router.post(
     "/optimizations",
-    response_model=OptimizationResponse,
-    status_code=status.HTTP_201_CREATED,
+    response_model=JobRead,
+    status_code=status.HTTP_202_ACCEPTED,
     dependencies=[Security(analyst_guard)],
 )
 def create_optimization(
     request: OptimizationRequest,
     response: Response,
     services: ServicesDependency,
-) -> OptimizationResponse:
-    stored = services.optimization_lab.optimize(
-        company=build_northstar_company(),
-        base_scenario=build_baseline_scenario(horizon_days=request.horizon_days),
+    principal: PrincipalDependency,
+    settings: SettingsDependency,
+    idempotency_key: JobIdempotencyKey = None,
+) -> JobRead:
+    if request.config.max_evaluations > settings.max_optimization_evaluations:
+        raise DomainValidationError(
+            f"max_evaluations {request.config.max_evaluations} exceeds the "
+            f"deployment limit {settings.max_optimization_evaluations}"
+        )
+    estimated_periods = (
+        request.config.max_evaluations
+        * request.replications
+        * request.horizon_days
+    )
+    if estimated_periods > settings.max_optimization_periods:
+        raise DomainValidationError(
+            f"this search needs up to {estimated_periods:,} simulated periods; "
+            f"the deployment limit is {settings.max_optimization_periods:,}"
+        )
+    payload = OptimizationJobRequest(
         config=request.config,
+        horizon_days=request.horizon_days,
         replications=request.replications,
         master_seed=request.master_seed,
+    ).model_dump(mode="json")
+    submission = submit_job(
+        SqlJobRepository(services.session_factory, services.tenant_id),
+        SubmitJob(
+            kind="optimization",
+            created_by=principal.subject,
+            request_payload=payload,
+            idempotency_key=idempotency_key,
+        ),
     )
-    response.headers["Location"] = (
-        f"/api/v1/optimizations/{stored.optimization_id}"
-    )
-    return OptimizationResponse(
-        optimization_id=stored.optimization_id,
-        digest=stored.digest,
-        evaluations=stored.evaluations,
-        created_at=stored.created_at,
-        result=stored.result,
-    )
+    return set_job_response(response, submission.job)
 
 
 # --- Adaptive Policy Builder ---------------------------------------------------
@@ -361,13 +404,17 @@ def validate_adaptive_policy(policy: AdaptivePolicy) -> dict[str, str]:
 
 @decision_loop_router.post(
     "/adaptive-policies/compare",
-    response_model=AdaptiveComparison,
+    response_model=JobRead,
+    status_code=status.HTTP_202_ACCEPTED,
     dependencies=[Security(analyst_guard)],
 )
 def compare_adaptive_policy(
     request: AdaptiveCompareRequest,
+    response: Response,
     services: ServicesDependency,
-) -> AdaptiveComparison:
+    principal: PrincipalDependency,
+    idempotency_key: JobIdempotencyKey = None,
+) -> JobRead:
     estimated_periods = 2 * request.replications * request.horizon_days
     if estimated_periods > services.max_adaptive_periods:
         raise ApiProblemError(
@@ -379,13 +426,22 @@ def compare_adaptive_policy(
                 f"the deployment limit is {services.max_adaptive_periods:,}."
             ),
         )
-    return compare_adaptive_vs_static(
-        company=build_northstar_company(),
-        static_scenario=build_baseline_scenario(horizon_days=request.horizon_days),
+    payload = AdaptiveComparisonJobRequest(
         policy=request.policy,
-        master_seed=request.master_seed,
+        horizon_days=request.horizon_days,
         replications=request.replications,
+        master_seed=request.master_seed,
+    ).model_dump(mode="json")
+    submission = submit_job(
+        SqlJobRepository(services.session_factory, services.tenant_id),
+        SubmitJob(
+            kind="adaptive_comparison",
+            created_by=principal.subject,
+            request_payload=payload,
+            idempotency_key=idempotency_key,
+        ),
     )
+    return set_job_response(response, submission.job)
 
 
 # --- Decision Ledger -----------------------------------------------------------

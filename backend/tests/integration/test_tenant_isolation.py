@@ -41,6 +41,12 @@ def _tenant_client(
         local_roles=("admin",),
         experiment_workers=1,
         replication_workers_per_experiment=1,
+        job_worker_mode="embedded",
+        job_workers=1,
+        job_poll_interval_seconds=0.01,
+        job_lease_seconds=2,
+        job_heartbeat_seconds=0.25,
+        job_retry_delay_seconds=0,
         database_pool_size=2,
         database_max_overflow=0,
     )
@@ -55,6 +61,14 @@ def _wait_for_terminal(client: TestClient, location: str) -> dict[str, object]:
         assert response.status_code == 200
         payload = response.json()
         if payload["status"] in {"completed", "failed"}:
+            return payload
+        if payload["status"] == "succeeded":
+            experiment = client.get(
+                f"/api/v1/experiments/{payload['result_resource_id']}"
+            )
+            assert experiment.status_code == 200
+            return experiment.json()
+        if payload["status"] in {"failed", "cancelled"}:
             return payload
         sleep(0.02)
     raise AssertionError("experiment did not reach a terminal state")
@@ -128,6 +142,7 @@ def test_scenarios_experiments_and_idempotency_are_tenant_scoped(
             headers=headers,
         )
         assert submitted_a.status_code == 202
+        tenant_a_job_id = submitted_a.json()["job_id"]
         experiment_a = _wait_for_terminal(
             tenant_a,
             submitted_a.headers["location"],
@@ -135,6 +150,9 @@ def test_scenarios_experiments_and_idempotency_are_tenant_scoped(
         assert experiment_a["status"] == "completed"
 
     with _tenant_client(tmp_path, "tenant-b") as tenant_b:
+        assert tenant_b.get(
+            f"/api/v1/jobs/{tenant_a_job_id}"
+        ).status_code == 404
         assert tenant_b.get("/api/v1/scenarios/shared-scenario").status_code == 404
         assert tenant_b.get(
             f"/api/v1/experiments/{experiment_a['id']}"
@@ -152,7 +170,11 @@ def test_scenarios_experiments_and_idempotency_are_tenant_scoped(
             headers=headers,
         )
         assert submitted_b.status_code == 202
-        assert submitted_b.json()["id"] != experiment_a["id"]
+        experiment_b = _wait_for_terminal(
+            tenant_b,
+            submitted_b.headers["location"],
+        )
+        assert experiment_b["id"] != experiment_a["id"]
 
 
 def test_datasets_calibrations_decisions_and_monitoring_are_tenant_scoped(
@@ -192,7 +214,7 @@ def test_datasets_calibrations_decisions_and_monitoring_are_tenant_scoped(
                 "calibration_id": "shared-calibration",
                 "dataset_id": "shared-history",
             },
-        ).status_code == 201
+        ).status_code == 202
         assert tenant_a.post(
             "/api/v1/ledger/decisions",
             json=decision_request,
@@ -223,7 +245,7 @@ def test_datasets_calibrations_decisions_and_monitoring_are_tenant_scoped(
                 "calibration_id": "shared-calibration",
                 "dataset_id": "shared-history",
             },
-        ).status_code == 201
+        ).status_code == 202
         assert tenant_b.post(
             "/api/v1/ledger/decisions",
             json=decision_request,

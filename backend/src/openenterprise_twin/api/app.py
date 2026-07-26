@@ -13,6 +13,7 @@ from openenterprise_twin import __version__
 from openenterprise_twin.api.decision_loop_routes import decision_loop_router
 from openenterprise_twin.api.dependencies import AppInfrastructure
 from openenterprise_twin.api.errors import install_error_handlers
+from openenterprise_twin.api.jobs import jobs_router
 from openenterprise_twin.api.middleware import (
     OperationalMetricsMiddleware,
     RequestBodyLimitMiddleware,
@@ -32,9 +33,9 @@ from openenterprise_twin.infrastructure.database import (
 from openenterprise_twin.infrastructure.identity import build_identity_provider
 from openenterprise_twin.infrastructure.models import Base
 from openenterprise_twin.infrastructure.runner import (
-    BoundedExperimentRunner,
     DurableJobWorker,
     EmbeddedJobWorkerPool,
+    backfill_active_experiment_jobs,
     build_analytical_job_handlers,
     build_worker_id,
 )
@@ -50,14 +51,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         Base.metadata.create_all(engine)
     session_factory = create_session_factory(engine)
     artifact_store = FileArtifactStore(resolved_settings.artifact_directory)
-    runner = BoundedExperimentRunner(
-        session_factory=session_factory,
-        artifact_store=artifact_store,
-        max_workers=resolved_settings.experiment_workers,
-        max_replication_workers=(
-            resolved_settings.replication_workers_per_experiment
-        ),
-    )
     handlers = build_analytical_job_handlers(
         session_factory=session_factory,
         artifact_store=artifact_store,
@@ -102,18 +95,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         del app
         try:
+            backfill_active_experiment_jobs(session_factory)
             if worker_pool is not None:
                 worker_pool.start()
-            runner.recover_pending()
             yield
         finally:
             if worker_pool is not None:
                 worker_pool.shutdown(
                     resolved_settings.job_shutdown_timeout_seconds
                 )
-            runner.shutdown(
-                resolved_settings.experiment_shutdown_timeout_seconds
-            )
             engine.dispose()
 
     expose_docs = resolved_settings.deployment_environment != "production"
@@ -154,7 +144,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.services = AppInfrastructure(
         session_factory=session_factory,
         artifact_store=artifact_store,
-        experiment_runner=runner,
         max_experiment_periods=resolved_settings.max_experiment_periods,
         max_adaptive_periods=resolved_settings.max_adaptive_periods,
     )
@@ -167,6 +156,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(public_system_router)
     app.include_router(router)
     app.include_router(system_router)
+    app.include_router(jobs_router)
     app.include_router(decision_loop_router)
     route_resolver = RegisteredRouteResolver.from_routes(app.routes)
     metrics = OperationalMetrics(
