@@ -124,7 +124,7 @@ function DecisionCard({ decision }: { decision: DecisionSummary }) {
       </dl>
       <Link
         className="control-link"
-        href={`/scenarios/${encodeURIComponent(decision.scenario_id)}/compare?experiment=${decision.experiment_id}`}
+        href={`/scenarios/${encodeURIComponent(decision.scenario_id)}/compare?experiment=${encodeURIComponent(decision.experiment_id)}`}
       >
         Open decision room
       </Link>
@@ -449,7 +449,10 @@ export function ReportsPage() {
                   <dd><code>{decision.brief_digest.slice(0, 12)}</code></dd>
                 </div>
               </dl>
-              <Link className="control-link" href={`/reports/${decision.experiment_id}`}>
+              <Link
+                className="control-link"
+                href={`/reports/${encodeURIComponent(decision.experiment_id)}`}
+              >
                 Open brief
               </Link>
             </article>

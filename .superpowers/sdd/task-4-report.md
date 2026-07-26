@@ -49,7 +49,9 @@ Completed and committed after focused TDD, full test-suite verification, static 
 ## Self-review
 
 - The snapshot and API models contain no principal, tenant, scenario instance, or trace identifier fields. The integration test confirms a supplied scenario identifier and the authenticated subject do not appear in the response.
-- The metrics middleware reads `scope['route'].path` only after dispatch. It never uses the raw request path; no match produces `unmatched`.
+- The metrics middleware compares `_route_path(scope)` with the immutable
+  registered-route regexes. The raw request path is never stored as a metric
+  label; no registered match produces `unmatched`.
 - The security middleware is registered outermost, so it transforms normal responses, exception-handler problems, Starlette 404 responses, direct `RequestBodyLimitMiddleware` rejections, and readiness responses.
 - The endpoint is part of the existing protected `system_router`; no separate authentication path was added.
 

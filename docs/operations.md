@@ -206,11 +206,10 @@ artifacts cannot reconstruct complete experiment evidence.
 
 ## Restore
 
-Restore into an isolated environment first. Keep the API stopped, verify the
-backup checksum, validate and stage the artifact archive, restore PostgreSQL
-transactionally, rename the matching staged artifacts into place, apply only
-the migrations required by the selected application release, and then run
-readiness.
+Restore into a new database and a new artifact root; do not overwrite the live
+pair. Validate that isolated pair with a candidate API process, then change both
+service settings together while the public API is stopped. A running deployment
+therefore observes either the complete old pair or the complete restored pair.
 
 ```bash
 set -euo pipefail
@@ -254,8 +253,26 @@ test ! -e "${artifact_dir}" || test -d "${artifact_dir}" || {
   echo "Artifact target exists but is not a directory" >&2
   exit 1
 }
+restore_id="$(date -u +%Y%m%d%H%M%S)"
+restore_db="openenterprise_twin_restore_${restore_id}"
 restore_stage="$(mktemp -d "${artifact_parent}/.artifact-restore.XXXXXX")"
-trap 'rm -rf "${restore_stage}"' EXIT
+restored_artifacts="${artifact_parent}/${artifact_name}.restore.${restore_id}"
+test ! -e "${restored_artifacts}" || {
+  echo "Restore artifact root already exists" >&2
+  exit 1
+}
+
+restore_complete=0
+cleanup_incomplete_restore() {
+  if test "${restore_complete}" != "1"; then
+    docker compose exec -T db dropdb \
+      --if-exists \
+      --username=openenterprise_twin \
+      "${restore_db}" >/dev/null 2>&1 || true
+    rm -rf "${restore_stage}" "${restored_artifacts}"
+  fi
+}
+trap cleanup_incomplete_restore EXIT
 archive="${backup_dir}/artifacts.tar.gz"
 
 .venv/bin/python - "${archive}" "${restore_stage}" "${artifact_name}" <<'PY'
@@ -284,51 +301,80 @@ with tarfile.open(archive, mode="r:gz") as bundle:
     bundle.extractall(destination, filter="data")
 PY
 
-restored_artifacts="${restore_stage}/${artifact_name}"
-test -d "${restored_artifacts}" || {
+staged_artifacts="${restore_stage}/${artifact_name}"
+test -d "${staged_artifacts}" || {
   echo "Archive does not contain the expected artifact root" >&2
-  rm -rf "${restore_stage}"
   exit 1
 }
+mv "${staged_artifacts}" "${restored_artifacts}"
 
+docker compose exec -T db createdb \
+  --username=openenterprise_twin \
+  "${restore_db}"
 docker compose exec -T db pg_restore \
   --username=openenterprise_twin \
-  --dbname=openenterprise_twin \
-  --clean \
-  --if-exists \
+  --dbname="${restore_db}" \
   --single-transaction \
   --exit-on-error \
   --no-owner \
   --no-privileges \
   < "${backup_dir}/postgres.dump"
 
-previous_artifacts="${artifact_dir}.pre-restore.$(date -u +%Y%m%dT%H%M%SZ)"
-test ! -e "${previous_artifacts}" || {
-  echo "Pre-restore path already exists" >&2
-  rm -rf "${restore_stage}"
-  exit 1
-}
-if test -e "${artifact_dir}"; then
-  mv "${artifact_dir}" "${previous_artifacts}"
-fi
-if ! mv "${restored_artifacts}" "${artifact_dir}"; then
-  test ! -e "${previous_artifacts}" ||
-    mv "${previous_artifacts}" "${artifact_dir}"
-  exit 1
-fi
+restore_complete=1
 rm -rf "${restore_stage}"
 trap - EXIT
 
-cd backend
-../.venv/bin/python -m alembic upgrade head
+printf 'Restored database: %s\nRestored artifacts: %s\n' \
+  "${restore_db}" \
+  "${restored_artifacts}"
 ```
 
-The restore requires an absolute, non-symlinked artifact root, rejects archive
-path traversal and links, stages extraction beside the target, and renames the
-current directory instead of deleting it. Keep the `.pre-restore.<timestamp>`
-directory until digest validation and readiness pass, then archive or remove it
-under the normal retention policy. Do not merge artifacts from unrelated
-backups.
+The script rejects archive traversal, links and special files; a failure drops
+the isolated restore database and removes only generated staging paths. It
+never mutates the live database or artifact root.
+
+Construct a secret-managed `RESTORE_DATABASE_URL` ending in the printed restore
+database name. Migrate and validate the restored pair without public traffic:
+
+```bash
+set -euo pipefail
+RESTORE_DATABASE_URL="${RESTORE_DATABASE_URL:?set the isolated restore database URL}"
+RESTORE_ARTIFACT_DIRECTORY="${RESTORE_ARTIFACT_DIRECTORY:?set the printed restore artifact root}"
+
+(cd backend &&
+  OPENENTERPRISE_TWIN_DATABASE_URL="${RESTORE_DATABASE_URL}" \
+  OPENENTERPRISE_TWIN_ARTIFACT_DIRECTORY="${RESTORE_ARTIFACT_DIRECTORY}" \
+  ../.venv/bin/python -m alembic upgrade head)
+
+OPENENTERPRISE_TWIN_DATABASE_URL="${RESTORE_DATABASE_URL}" \
+OPENENTERPRISE_TWIN_ARTIFACT_DIRECTORY="${RESTORE_ARTIFACT_DIRECTORY}" \
+  .venv/bin/python -m uvicorn openenterprise_twin.api.app:create_app \
+    --factory --host 127.0.0.1 --port 18001 &
+candidate_pid=$!
+trap 'kill "${candidate_pid}" 2>/dev/null || true' EXIT
+
+for attempt in $(seq 1 30); do
+  curl --fail --silent http://127.0.0.1:18001/ready && break
+  test "${attempt}" != "30" || exit 1
+  sleep 1
+done
+curl --fail --silent \
+  http://127.0.0.1:18001/api/v1/scenarios/current-plan \
+  --header "X-API-Key: ${OPENENTERPRISE_TWIN_API_KEY:-}"
+kill -TERM "${candidate_pid}"
+wait "${candidate_pid}"
+trap - EXIT
+```
+
+Run the release-appropriate evidence/digest smoke checks before cutover. Then
+stop the live API and atomically replace one service-manager environment file
+containing both `OPENENTERPRISE_TWIN_DATABASE_URL` and
+`OPENENTERPRISE_TWIN_ARTIFACT_DIRECTORY`. Start one API process from that
+versioned configuration and require `/health` and `/ready` before restoring
+traffic. Keep the old database and artifact root through the rollback retention
+window; rollback selects both old values in the same configuration revision.
+Do not merge artifacts from unrelated backups or update the two settings
+independently.
 
 ## Graceful shutdown
 

@@ -231,8 +231,8 @@ function jsonResponse(payload: unknown) {
   });
 }
 
-function renderReport() {
-  const location = memoryLocation({ path: "/reports/42" });
+function renderReport(path = "/reports/42") {
+  const location = memoryLocation({ path });
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -245,13 +245,13 @@ function renderReport() {
   );
 }
 
-function installReportApi() {
+function installReportApi(experimentId = "42") {
   const fetchMock = vi.fn<typeof fetch>((input) => {
     const path = String(input);
-    if (path.endsWith("/api/v1/experiments/42/comparison")) {
+    if (path.endsWith(`/api/v1/experiments/${experimentId}/comparison`)) {
       return Promise.resolve(jsonResponse(comparisonFixture));
     }
-    if (path.endsWith("/api/v1/experiments/42/report")) {
+    if (path.endsWith(`/api/v1/experiments/${experimentId}/report`)) {
       return Promise.resolve(jsonResponse(reportFixture));
     }
     return Promise.reject(new Error(`Unexpected API request: ${path}`));
@@ -266,6 +266,18 @@ afterEach(() => {
 });
 
 describe("ExecutiveReportPage", () => {
+  it("re-encodes a decoded experiment identifier in navigation links", async () => {
+    installReportApi("42%20review");
+    renderReport("/reports/42%20review");
+
+    expect(
+      await screen.findByRole("link", { name: "Back to decision room" }),
+    ).toHaveAttribute(
+      "href",
+      "/scenarios/resilient-margin/compare?experiment=42%20review",
+    );
+  });
+
   it("renders eight complete chapters from one frozen experiment", async () => {
     const fetchMock = installReportApi();
     const { container } = renderReport();

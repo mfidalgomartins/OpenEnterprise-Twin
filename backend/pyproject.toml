@@ -12,7 +12,7 @@ license = {text = "Apache-2.0"}
 authors = [{name = "OpenEnterprise Twin contributors"}]
 dependencies = [
     "alembic>=1.14,<2",
-    "fastapi>=0.115,<1",
+    "fastapi>=0.137.2,<1",
     "greenlet>=3.1,<4",
     "httpx>=0.28,<1",
     "numpy>=2.2,<3",

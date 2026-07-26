@@ -228,9 +228,16 @@ The HTTP contract is consistent:
 Connector configuration is typed and allow-listed. PostgreSQL connectors accept
 validated SQL `SELECT` statements through a read-only transaction and bounded
 row/time limits. HTTPS connectors allow only configured `https` origins, resolve
-and reject private/link-local destinations, set strict timeouts and constrain
-redirects. Uploaded files are parsed in memory under request and row budgets;
-original filenames are metadata only and never become server paths.
+every hostname before connecting, and reject loopback, unspecified, multicast,
+private, link-local and cloud-metadata destinations for both IPv4 and IPv6.
+Resolution is pinned for the connection to prevent DNS rebinding, and every
+redirect target is independently re-resolved and revalidated against the same
+origin and address policy. Strict connect/read/total timeouts and redirect
+limits apply. Connector specification tests cover each prohibited address
+class, mixed public/private DNS answers, DNS rebinding and redirect attempts
+into forbidden destinations. Uploaded files are parsed in memory under request
+and row budgets; original filenames are metadata only and never become server
+paths.
 
 ## Error handling and observability
 

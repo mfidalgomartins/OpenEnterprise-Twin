@@ -23,8 +23,8 @@ The browser owns interaction and presentation. FastAPI owns validation,
 transport errors, authentication, operational probes and dependency wiring.
 Application services own persisted experiment lifecycle and decision assembly.
 The bounded in-process runner owns execution. The kernel owns business
-transitions, Monte Carlo aggregation, paired comparison and evidence-linked
-reporting.
+transitions and Monte Carlo aggregation; `scenarios` owns paired comparison,
+and `reporting` owns evidence-linked recommendations and briefs.
 
 ## Backend boundaries
 

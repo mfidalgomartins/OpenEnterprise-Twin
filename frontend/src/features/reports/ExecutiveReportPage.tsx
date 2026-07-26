@@ -485,7 +485,7 @@ export function ExecutiveReportPage() {
         </div>
         <div className="executive-report__actions">
           <Link
-            href={`/scenarios/${encodeURIComponent(comparison.candidate_scenario_id)}/compare?experiment=${experimentId}`}
+            href={`/scenarios/${encodeURIComponent(comparison.candidate_scenario_id)}/compare?experiment=${encodeURIComponent(experimentId)}`}
           >
             Back to decision room
           </Link>
