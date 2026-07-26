@@ -34,6 +34,7 @@ from openenterprise_twin.infrastructure.database import (
     create_database_engine,
     create_session_factory,
 )
+from openenterprise_twin.infrastructure.identity import build_identity_provider
 from openenterprise_twin.infrastructure.models import Base
 from openenterprise_twin.infrastructure.repositories import (
     SqlAlchemyDecisionEvidenceRepository,
@@ -140,6 +141,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         max_adaptive_periods=resolved_settings.max_adaptive_periods,
     )
     app.state.settings = resolved_settings
+    app.state.identity_provider = build_identity_provider(resolved_settings)
     install_error_handlers(app)
     app.include_router(public_router)
     app.include_router(public_system_router)

@@ -52,6 +52,7 @@ def _settings(
         database_pool_size=2,
         database_max_overflow=0,
         deployment_environment=deployment_environment,
+        authentication_mode="api_key" if api_key is not None else "local",
         api_key=api_key,
         trusted_hosts=trusted_hosts,
         build_commit=build_commit,

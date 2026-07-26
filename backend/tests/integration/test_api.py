@@ -536,6 +536,7 @@ def test_production_requires_a_strong_api_key(
             database_url=f"sqlite+pysqlite:///{tmp_path / 'twin.db'}",
             artifact_directory=tmp_path / "artifacts",
             deployment_environment="production",
+            authentication_mode="api_key",
             api_key=api_key,
         )
 
@@ -546,6 +547,7 @@ def test_production_requires_explicit_trusted_hosts(tmp_path: Path) -> None:
             database_url=f"sqlite+pysqlite:///{tmp_path / 'twin.db'}",
             artifact_directory=tmp_path / "artifacts",
             deployment_environment="production",
+            authentication_mode="api_key",
             api_key=SecretStr("test-enterprise-key-with-32-characters"),
         )
 
@@ -560,6 +562,7 @@ def test_production_rejects_unsafe_trusted_hosts(
             database_url=f"sqlite+pysqlite:///{tmp_path / 'twin.db'}",
             artifact_directory=tmp_path / "artifacts",
             deployment_environment="production",
+            authentication_mode="api_key",
             api_key=SecretStr("test-enterprise-key-with-32-characters"),
             trusted_hosts=trusted_hosts,
         )
@@ -601,7 +604,10 @@ def test_mutation_audit_log_escapes_control_characters(
 
 def test_api_key_protects_resources_but_not_health(tmp_path: Path) -> None:
     settings = _settings(tmp_path).model_copy(
-        update={"api_key": SecretStr("test-enterprise-key")}
+        update={
+            "authentication_mode": "api_key",
+            "api_key": SecretStr("test-enterprise-key"),
+        }
     )
     app = create_app(settings)
 
@@ -626,6 +632,7 @@ def test_production_disables_api_documentation_and_rejects_unknown_hosts(
         database_url=f"sqlite+pysqlite:///{tmp_path / 'twin.db'}",
         artifact_directory=tmp_path / "artifacts",
         deployment_environment="production",
+        authentication_mode="api_key",
         api_key=SecretStr("test-enterprise-key-with-32-characters"),
         trusted_hosts=("enterprise.example", "testserver"),
     )
