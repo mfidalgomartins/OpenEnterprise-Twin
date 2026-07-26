@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     deployment_environment: Literal["development", "test", "production"] = (
         "development"
     )
+    build_commit: str | None = None
     api_key: SecretStr | None = None
     trusted_hosts: tuple[str, ...] = _DEVELOPMENT_TRUSTED_HOSTS
     max_request_body_bytes: RequestBodyBytes = 4_194_304

@@ -96,3 +96,7 @@ def get_session(
 ) -> Iterator[Session]:
     with services.session_factory() as session:
         yield session
+
+
+SettingsDependency = Annotated[Settings, Depends(get_settings)]
+ServicesDependency = Annotated[AppServices, Depends(get_services)]

@@ -8,11 +8,13 @@ from sqlalchemy.engine import make_url
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from openenterprise_twin import __version__
 from openenterprise_twin.api.decision_loop_routes import decision_loop_router
 from openenterprise_twin.api.dependencies import AppServices
 from openenterprise_twin.api.errors import install_error_handlers
 from openenterprise_twin.api.middleware import RequestBodyLimitMiddleware
 from openenterprise_twin.api.routes import public_router, router
+from openenterprise_twin.api.system import public_system_router, system_router
 from openenterprise_twin.application.decision_loop import (
     CalibrationStudioService,
     MonitoringService,
@@ -70,7 +72,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     expose_docs = resolved_settings.deployment_environment != "production"
     app = FastAPI(
         title="OpenEnterprise Twin API",
-        version="0.4.1",
+        version=__version__,
         lifespan=lifespan,
         docs_url="/docs" if expose_docs else None,
         redoc_url="/redoc" if expose_docs else None,
@@ -132,7 +134,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = resolved_settings
     install_error_handlers(app)
     app.include_router(public_router)
+    app.include_router(public_system_router)
     app.include_router(router)
+    app.include_router(system_router)
     app.include_router(decision_loop_router)
 
     return app

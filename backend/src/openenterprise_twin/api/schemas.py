@@ -70,3 +70,21 @@ class ProblemDetail(ApiModel):
     detail: str
     trace_id: str
     violations: tuple[FieldViolation, ...] = ()
+
+
+class ReadinessChecks(ApiModel):
+    artifacts: Literal["ready"]
+    database: Literal["ready"]
+
+
+class ReadinessStatus(ApiModel):
+    status: Literal["ready"]
+    checks: ReadinessChecks
+
+
+class SystemInfo(ApiModel):
+    name: Literal["OpenEnterprise Twin"]
+    version: str
+    environment: Literal["development", "test", "production"]
+    build_commit: str | None
+    capabilities: tuple[str, ...]
