@@ -1,4 +1,4 @@
-import { Route, Routes } from "react-router-dom";
+import { Route, Switch } from "wouter";
 
 import {
   AdaptivePolicyPage,
@@ -22,31 +22,25 @@ import { AppShell } from "./AppShell";
 
 export function AppRoutes() {
   return (
-    <Routes>
-      <Route element={<AppShell />}>
-        <Route index element={<BriefingPage />} />
-        <Route path="twin" element={<TwinPage />} />
+    <AppShell>
+      <Switch>
+        <Route path="/" component={BriefingPage} />
+        <Route path="/twin" component={TwinPage} />
+        <Route path="/scenarios" component={ScenarioBuilder} />
         <Route
-          path="scenarios"
-          element={<ScenarioBuilder />}
+          path="/scenarios/:scenarioId/compare"
+          component={ScenarioComparePage}
         />
-        <Route
-          path="scenarios/:scenarioId/compare"
-          element={<ScenarioComparePage />}
-        />
-        <Route path="decisions" element={<DecisionsPage />} />
-        <Route path="calibration" element={<CalibrationStudioPage />} />
-        <Route path="optimization" element={<OptimizationLabPage />} />
-        <Route path="adaptive" element={<AdaptivePolicyPage />} />
-        <Route path="ledger" element={<DecisionLedgerPage />} />
-        <Route path="monitoring" element={<MonitoringCenterPage />} />
-        <Route
-          path="reports/:experimentId"
-          element={<ExecutiveReportPage />}
-        />
-        <Route path="reports" element={<ReportsPage />} />
-        <Route path="*" element={<NotFoundPage />} />
-      </Route>
-    </Routes>
+        <Route path="/decisions" component={DecisionsPage} />
+        <Route path="/calibration" component={CalibrationStudioPage} />
+        <Route path="/optimization" component={OptimizationLabPage} />
+        <Route path="/adaptive" component={AdaptivePolicyPage} />
+        <Route path="/ledger" component={DecisionLedgerPage} />
+        <Route path="/monitoring" component={MonitoringCenterPage} />
+        <Route path="/reports/:experimentId" component={ExecutiveReportPage} />
+        <Route path="/reports" component={ReportsPage} />
+        <Route component={NotFoundPage} />
+      </Switch>
+    </AppShell>
   );
 }

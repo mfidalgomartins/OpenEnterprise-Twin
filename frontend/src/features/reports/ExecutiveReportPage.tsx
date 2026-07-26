@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams } from "wouter";
 
 import { formatDate, formatPercent } from "../../lib/format";
 import {
@@ -405,7 +405,7 @@ function ProvenanceChapter({
 }
 
 export function ExecutiveReportPage() {
-  const { experimentId = "" } = useParams();
+  const { experimentId = "" } = useParams<{ experimentId?: string }>();
   const immutableQueryOptions = {
     enabled: Boolean(experimentId),
     gcTime: Infinity,
@@ -485,11 +485,11 @@ export function ExecutiveReportPage() {
         </div>
         <div className="executive-report__actions">
           <Link
-            to={`/scenarios/${encodeURIComponent(comparison.candidate_scenario_id)}/compare?experiment=${experimentId}`}
+            href={`/scenarios/${encodeURIComponent(comparison.candidate_scenario_id)}/compare?experiment=${encodeURIComponent(experimentId)}`}
           >
             Back to decision room
           </Link>
-          <Link to="/scenarios">Create variant</Link>
+          <Link href="/scenarios">Create variant</Link>
           <button
             onClick={() => {
               void navigator.clipboard?.writeText(report.digest);

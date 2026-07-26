@@ -70,3 +70,34 @@ class ProblemDetail(ApiModel):
     detail: str
     trace_id: str
     violations: tuple[FieldViolation, ...] = ()
+
+
+class ReadinessChecks(ApiModel):
+    artifacts: Literal["ready"]
+    database: Literal["ready"]
+
+
+class ReadinessStatus(ApiModel):
+    status: Literal["ready"]
+    checks: ReadinessChecks
+
+
+class SystemInfo(ApiModel):
+    name: Literal["OpenEnterprise Twin"]
+    version: str
+    environment: Literal["development", "test", "production"]
+    build_commit: str | None
+    capabilities: tuple[str, ...]
+
+
+class HttpRequestMetric(ApiModel):
+    method: str
+    route: str
+    status_family: Literal["1xx", "2xx", "3xx", "4xx", "5xx"]
+    count: Annotated[int, Field(ge=1)]
+    duration_seconds_total: Annotated[float, Field(ge=0)]
+
+
+class OperationalMetricsSnapshot(ApiModel):
+    uptime_seconds: Annotated[float, Field(ge=0)]
+    http_requests: tuple[HttpRequestMetric, ...]

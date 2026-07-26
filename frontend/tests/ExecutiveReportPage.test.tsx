@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { Router } from "wouter";
+import { memoryLocation } from "wouter/memory-location";
 
 import { AppRoutes } from "../src/app/routes";
 
@@ -230,26 +231,27 @@ function jsonResponse(payload: unknown) {
   });
 }
 
-function renderReport() {
+function renderReport(path = "/reports/42") {
+  const location = memoryLocation({ path });
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={["/reports/42"]}>
+      <Router hook={location.hook}>
         <AppRoutes />
-      </MemoryRouter>
+      </Router>
     </QueryClientProvider>,
   );
 }
 
-function installReportApi() {
+function installReportApi(experimentId = "42") {
   const fetchMock = vi.fn<typeof fetch>((input) => {
     const path = String(input);
-    if (path.endsWith("/api/v1/experiments/42/comparison")) {
+    if (path.endsWith(`/api/v1/experiments/${experimentId}/comparison`)) {
       return Promise.resolve(jsonResponse(comparisonFixture));
     }
-    if (path.endsWith("/api/v1/experiments/42/report")) {
+    if (path.endsWith(`/api/v1/experiments/${experimentId}/report`)) {
       return Promise.resolve(jsonResponse(reportFixture));
     }
     return Promise.reject(new Error(`Unexpected API request: ${path}`));
@@ -264,6 +266,18 @@ afterEach(() => {
 });
 
 describe("ExecutiveReportPage", () => {
+  it("re-encodes a decoded experiment identifier in navigation links", async () => {
+    installReportApi("42%20review");
+    renderReport("/reports/42%20review");
+
+    expect(
+      await screen.findByRole("link", { name: "Back to decision room" }),
+    ).toHaveAttribute(
+      "href",
+      "/scenarios/resilient-margin/compare?experiment=42%20review",
+    );
+  });
+
   it("renders eight complete chapters from one frozen experiment", async () => {
     const fetchMock = installReportApi();
     const { container } = renderReport();

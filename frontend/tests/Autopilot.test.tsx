@@ -2,7 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { Router } from "wouter";
+import { memoryLocation } from "wouter/memory-location";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -21,12 +22,13 @@ function jsonResponse(payload: unknown, status = 200) {
 }
 
 function renderWithClient(element: ReactElement) {
+  const location = memoryLocation();
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>{element}</MemoryRouter>
+      <Router hook={location.hook}>{element}</Router>
     </QueryClientProvider>,
   );
 }

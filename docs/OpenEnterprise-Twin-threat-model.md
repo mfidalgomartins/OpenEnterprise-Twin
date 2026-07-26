@@ -2,7 +2,12 @@
 
 ## Scope and assumptions
 
-This threat model covers the public single-tenant reference deployment: browser, Nginx edge, FastAPI API, bounded experiment runner, PostgreSQL and the filesystem artifact store. It assumes TLS terminates at a trusted ingress, the company model contains commercially sensitive operating assumptions but no regulated personal data, and production operators configure a high-entropy API key.
+This v0.5 threat model covers the public single-tenant reference deployment:
+browser, Nginx edge, FastAPI API, bounded in-process experiment runner,
+PostgreSQL and the content-addressed filesystem artifact store. It assumes TLS
+terminates at a trusted ingress, the company model contains commercially
+sensitive operating assumptions but no regulated personal data, and production
+operators configure a high-entropy API key.
 
 Out of scope for this release are multi-tenant isolation, end-user identity federation, third-party plugin execution and ERP/CRM connectors. Those capabilities require a new threat-model review before implementation.
 
@@ -17,6 +22,7 @@ Out of scope for this release are multi-tenant isolation, end-user identity fede
 | PostgreSQL credentials and API key | Confidentiality and rotation |
 | Compute capacity | Availability and bounded consumption |
 | Audit and trace identifiers | Integrity and operational usefulness |
+| Build metadata and operational metrics | Integrity and bounded disclosure |
 
 ## Trust boundaries
 
@@ -40,7 +46,7 @@ flowchart LR
 
 | ID | Threat | Impact | Implemented mitigation | Residual action |
 | --- | --- | --- | --- | --- |
-| T1 | Unauthenticated read or experiment submission | Disclosure, manipulated decisions, compute abuse | Production startup requires `OPENENTERPRISE_TWIN_API_KEY`; all `/api/v1` resources except health require a constant-time checked key; Nginx injects it server-side | Rotate key and restrict ingress; adopt OIDC/RBAC before multiple user groups |
+| T1 | Unauthenticated read or experiment submission | Disclosure, manipulated decisions, compute abuse | Production startup requires `OPENENTERPRISE_TWIN_API_KEY`; business routes plus `/api/v1/system/info` and `/api/v1/system/metrics` require a constant-time checked key; Nginx injects it server-side | Rotate key and restrict ingress; adopt OIDC/RBAC before multiple user groups |
 | T2 | Default or exposed database credentials | Complete data compromise | Compose requires an operator-supplied password and binds PostgreSQL to `127.0.0.1`; repository ignores `.env` | Use a secret manager and private network in deployed environments |
 | T3 | Oversized JSON or excessive experiment request | Memory/CPU exhaustion | 1 MiB request-body limit, maximum 1,000 replications, bounded workers/queue and a default 50,000 simulated-period budget | Add per-principal rate limiting at ingress for public deployments |
 | T4 | Duplicate or replayed experiment submission | Resource waste and confusing evidence | Bounded `Idempotency-Key`, payload conflict detection and immutable scenario identifiers | Set ingress request-rate alerts |
@@ -51,12 +57,15 @@ flowchart LR
 | T9 | Invalid model input creates unsafe recommendation | Decision integrity loss | Strict Pydantic models, company compatibility validation, physical/accounting invariants, hard-constraint precedence and 30-run adoption gate | Calibrate and independently validate models before operational use |
 | T10 | Stale or fabricated executive evidence | Governance failure | Briefs cite only computed metric IDs and carry model, assumptions, seed, replication, plugin and digest provenance | Export audit logs to append-only retention for regulated use |
 | T11 | Dependency or container compromise | Code execution | Locked npm install, bounded Python versions, non-root backend image, minimal multi-stage images and CI security scanning | Pin reviewed release digests and sign production images |
-| T12 | Sensitive data leaked in logs/errors | Confidentiality loss | Stable problem details suppress stack traces; audit records log route, status, subject and trace ID, not payload or key | Apply central-log access controls and retention policy |
+| T12 | Sensitive data leaked in logs, errors or metrics | Confidentiality loss | Stable problem details suppress stack traces; audit records omit payloads and keys; metrics aggregate only method, registered route template and status family | Apply central-log access controls and retention policy |
+| T13 | Operational endpoints disclose topology or secrets | Reconnaissance and credential disclosure | `/health` returns process status only; `/ready` returns a uniform RFC 9457 failure; build metadata and bounded metrics require authentication and expose no URLs, credentials, business identifiers or payloads | Restrict operational endpoints at ingress and monitor repeated probe failures |
 
 ## Security invariants
 
 - Production configuration without an API key must fail closed at startup.
-- Health endpoints expose only process status; business resources require authentication.
+- `/health` and `/api/v1/health` are dependency-free and expose only process status.
+- `/ready` reports only aggregate readiness; it never returns database URLs, paths or exception details.
+- System information and metrics require authentication and never expose credentials, business payloads or unbounded identifiers.
 - A request cannot allocate more simulated periods than the configured budget.
 - Candidate evidence cannot be compared unless baseline and candidate share seed, replication count, lifecycle, model/schema and aligned shock-tape digests.
 - Exploratory evidence cannot produce an adoption decision.
@@ -73,12 +82,20 @@ flowchart LR
 - Apply ingress rate limits, request timeouts and network policies around API, database and artifact storage.
 - Send audit/application logs to centralized append-only storage and alert on repeated 401, 413, 422-budget and 429 responses.
 - Run CI dependency, static-analysis, unit, PostgreSQL integration, container and browser release gates before deployment.
+- Monitor `/ready` separately from `/health`; restart only for failed liveness and investigate dependency failures before replacing a healthy process.
+- Keep the orchestrator termination grace period longer than `OPENENTERPRISE_TWIN_EXPERIMENT_SHUTDOWN_TIMEOUT_SECONDS`.
 
 ## Accepted residual risks
 
-The release uses one shared API-key identity and an in-process worker, so it cannot provide per-user authorization, approval separation, horizontal failover or a durable distributed queue. The synthetic model is safe for demonstration but does not establish that a real-company decision is valid. These are explicit product boundaries, not controls delegated to the simulator.
+The release uses one shared API-key identity, an in-process worker,
+process-local metrics and a filesystem artifact store. It therefore cannot
+provide per-user authorization, identity-bound approval separation, horizontal
+worker failover, a durable distributed queue, fleet-wide telemetry or
+multi-node artifacts without shared storage. The synthetic model is safe for
+demonstration but does not establish that a real-company decision is valid.
+These are explicit product boundaries, not controls delegated to the simulator.
 
-## v0.3 closed-loop surfaces
+## Governed decision-loop surfaces
 
 The governed decision loop adds new input surfaces, each threat-modelled and mitigated:
 
@@ -88,4 +105,24 @@ The governed decision loop adds new input surfaces, each threat-modelled and mit
 - **Decision ledger** (`/api/v1/ledger/decisions/*`). Transitions use optimistic concurrency (a conditional UPDATE guards against lost updates); approvals require separation of duties and are bound to the exact approved content digest, so approved evidence cannot be silently changed; the event log is append-only. Concurrent creation of the same decision surfaces as a clean `409`, never an unhandled error. Because this release uses one shared API-key identity, the ledger `actor` and `approver` labels (e.g. `cfo`, `ceo`) are declared by the caller and separation of duties is enforced on those labels; the authenticated principal is recorded in the append-only request audit log. Binding each label to a distinct authenticated user is an OIDC/RBAC deployment extension, consistent with the accepted residual risks below.
 - **Outcome monitoring** (`/api/v1/ledger/decisions/{id}/outcomes`). Inputs are schema-validated and matched to existing predictions; alerts are deduplicated and cooldown-limited to prevent alert flooding.
 
-All new surfaces inherit the existing controls — authentication, trusted-host validation, request-size limits, RFC 9457 problem responses without stack traces, and append-only audit logging of mutating requests. No secrets appear in code, examples or logs.
+All decision-loop surfaces inherit authentication, trusted-host validation,
+request-size limits, RFC 9457 problem responses without stack traces, security
+headers and append-only audit logging of mutating requests. No secrets appear
+in code, examples or logs.
+
+## v0.5 operational surfaces
+
+- **Readiness** (`GET /ready`) executes a bounded `SELECT 1` and verifies the
+  artifact directory with an exclusive temporary file, flush, `fsync`, exact
+  read and cleanup. Any dependency failure maps to the same safe `503`
+  response.
+- **Build information** (`GET /api/v1/system/info`) returns only the package
+  version, deployment environment, optional lowercase hexadecimal build commit
+  and implemented capability identifiers. Configuration rejects malformed
+  build identifiers.
+- **Operational metrics** (`GET /api/v1/system/metrics`) are lock-protected,
+  process-local aggregates. Labels are bounded and unknown paths collapse to
+  `unmatched`; no principal, tenant, scenario or trace identifier is retained.
+- **Response hardening** applies no-store, anti-sniffing, anti-framing,
+  no-referrer and restrictive browser-permission headers at the API boundary,
+  including problem responses and probe routes.

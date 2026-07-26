@@ -17,6 +17,10 @@ RequestBodyBytes = Annotated[int, Field(ge=1, le=100_000_000)]
 ExperimentPeriods = Annotated[int, Field(ge=1, le=100_000_000)]
 DatasetObservations = Annotated[int, Field(ge=1, le=1_000_000)]
 OptimizationEvaluations = Annotated[int, Field(ge=8, le=20_000)]
+BuildCommit = Annotated[
+    str,
+    Field(min_length=7, max_length=64, pattern=r"^[0-9a-f]+$"),
+]
 _DEVELOPMENT_TRUSTED_HOSTS = ("localhost", "127.0.0.1", "testserver")
 
 
@@ -43,6 +47,7 @@ class Settings(BaseSettings):
     deployment_environment: Literal["development", "test", "production"] = (
         "development"
     )
+    build_commit: BuildCommit | None = None
     api_key: SecretStr | None = None
     trusted_hosts: tuple[str, ...] = _DEVELOPMENT_TRUSTED_HOSTS
     max_request_body_bytes: RequestBodyBytes = 4_194_304

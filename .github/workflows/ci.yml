@@ -18,8 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -44,7 +44,7 @@ jobs:
           python -m pytest tests/unit -q --junitxml=test-results/backend-unit.xml
       - name: Upload failed backend report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: backend-failure-report
           path: backend/test-results/
@@ -76,8 +76,8 @@ jobs:
       OPENENTERPRISE_TWIN_EXPERIMENT_WORKERS: "1"
       OPENENTERPRISE_TWIN_REPLICATION_WORKERS_PER_EXPERIMENT: "1"
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -94,6 +94,9 @@ jobs:
           python -m alembic downgrade base
           python -m alembic upgrade head
       - name: Seed Northstar and verify PostgreSQL-backed API
+        env:
+          OPENENTERPRISE_TWIN_API_KEY: ci-only-public-test-key-0000000000000000
+          OPENENTERPRISE_TWIN_BUILD_COMMIT: ${{ github.sha }}
         run: |
           mkdir -p backend/test-results
           cd backend
@@ -113,7 +116,108 @@ jobs:
             fi
             sleep 1
           done
-          python -c "import json, urllib.request; payload=json.load(urllib.request.urlopen('http://127.0.0.1:8000/api/v1/scenarios/current-plan')); assert payload['company_model_version'] == '0.2.0'"
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from urllib.error import HTTPError
+          from urllib.request import Request, urlopen
+
+          from openenterprise_twin import __version__
+
+          base_url = "http://127.0.0.1:8000"
+          api_key = os.environ["OPENENTERPRISE_TWIN_API_KEY"]
+          build_commit = os.environ["OPENENTERPRISE_TWIN_BUILD_COMMIT"]
+
+          assert len(api_key) >= 32
+
+          def request_json(
+              path: str,
+              *,
+              expected_status: int = 200,
+              authenticated: bool = False,
+          ) -> dict[str, object]:
+              headers = {"X-API-Key": api_key} if authenticated else {}
+              request = Request(f"{base_url}{path}", headers=headers)
+              try:
+                  with urlopen(request, timeout=5) as response:
+                      status = response.status
+                      body = response.read()
+              except HTTPError as error:
+                  status = error.code
+                  body = error.read()
+              assert status == expected_status, (path, status, body)
+              payload = json.loads(body)
+              assert isinstance(payload, dict), (path, payload)
+              return payload
+
+          health = request_json("/health")
+          assert health == {"status": "ok"}
+
+          ready = request_json("/ready")
+          assert ready == {
+              "status": "ready",
+              "checks": {"artifacts": "ready", "database": "ready"},
+          }
+
+          unauthorized = request_json(
+              "/api/v1/system/info",
+              expected_status=401,
+          )
+          assert unauthorized["code"] == "authentication_required"
+
+          system_info = request_json(
+              "/api/v1/system/info",
+              authenticated=True,
+          )
+          assert set(system_info) == {
+              "name",
+              "version",
+              "environment",
+              "build_commit",
+              "capabilities",
+          }
+          assert system_info["name"] == "OpenEnterprise Twin"
+          assert isinstance(system_info["version"], str)
+          assert system_info["version"] == __version__
+          assert re.fullmatch(
+              r"\d+\.\d+\.\d+(?:[a-zA-Z0-9.+-]*)?",
+              system_info["version"],
+          )
+          assert system_info["environment"] in {
+              "development",
+              "test",
+              "production",
+          }
+          assert re.fullmatch(r"[0-9a-f]{40}", build_commit)
+          assert system_info["build_commit"] == build_commit
+          capabilities = system_info["capabilities"]
+          assert isinstance(capabilities, list) and capabilities
+          assert capabilities == sorted(set(capabilities))
+          assert all(
+              isinstance(capability, str)
+              and re.fullmatch(r"[a-z][a-z0-9_]*", capability)
+              for capability in capabilities
+          )
+          serialized_system_info = json.dumps(system_info).lower()
+          assert api_key.lower() not in serialized_system_info
+          assert all(
+              forbidden not in serialized_system_info
+              for forbidden in (
+                  "api_key",
+                  "artifact_directory",
+                  "database_url",
+                  "postgresql://",
+                  "postgresql+psycopg://",
+              )
+          )
+
+          current_plan = request_json(
+              "/api/v1/scenarios/current-plan",
+              authenticated=True,
+          )
+          assert current_plan["company_model_version"] == "0.2.0"
+          PY
       - name: API integration tests
         working-directory: backend
         run: |
@@ -121,7 +225,7 @@ jobs:
           python -m pytest tests/integration -q --junitxml=test-results/backend-integration.xml
       - name: Upload failed integration report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: postgres-integration-failure-report
           path: backend/test-results/
@@ -133,8 +237,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -157,7 +261,7 @@ jobs:
         run: npm run build
       - name: Upload failed frontend report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-failure-report
           path: frontend/test-results/
@@ -170,7 +274,7 @@ jobs:
     timeout-minutes: 20
     needs: [backend, frontend]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Build production image
         run: |
           docker build --file backend/Dockerfile --tag openenterprise-twin-api:ci backend
@@ -204,13 +308,13 @@ jobs:
       LIVE_E2E: "1"
       VITE_API_BASE_URL: http://127.0.0.1:8000
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements-dev.lock
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -248,7 +352,7 @@ jobs:
           npm run e2e
       - name: Upload failed E2E report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-failure-report
           path: |

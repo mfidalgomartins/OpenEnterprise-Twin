@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link } from "wouter";
 
 import { formatDate, formatPercent } from "../../lib/format";
 import { formatDecisionStatus, metricLabels } from "./formatScenario";
@@ -80,7 +80,7 @@ export function DecisionRail({ experimentId, report }: DecisionRailProps) {
         </dl>
         <Link
           className="decision-rail__action"
-          to={`/reports/${encodeURIComponent(experimentId)}`}
+          href={`/reports/${encodeURIComponent(experimentId)}`}
         >
           Open published executive brief
         </Link>

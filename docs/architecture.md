@@ -1,6 +1,11 @@
 # Architecture
 
-OpenEnterprise Twin 0.2 is a monorepo with a React client and a modular Python monolith. PostgreSQL stores transactional lifecycle state; large immutable experiment results live in a content-addressed artifact store. The architecture optimizes for explainability, governed decisions and replaceable boundaries before distributed scale.
+OpenEnterprise Twin v0.5 is a monorepo with a React decision cockpit and an
+enterprise-ready modular Python monolith. PostgreSQL stores transactional
+lifecycle state; large immutable experiment results live in a
+content-addressed filesystem artifact store. The architecture optimizes for
+explainability, governed decisions, deterministic replay and replaceable
+boundaries before distributed scale.
 
 ## System context
 
@@ -14,7 +19,12 @@ flowchart TB
     SERVICES --> ARTIFACTS["ArtifactStore"]
 ```
 
-The browser owns interaction and presentation. FastAPI owns validation, transport errors and dependency wiring. Application services own durable experiment execution and decision assembly. The kernel owns business transitions, Monte Carlo aggregation, paired comparison and evidence-linked reporting.
+The browser owns interaction and presentation. FastAPI owns validation,
+transport errors, authentication, operational probes and dependency wiring.
+Application services own persisted experiment lifecycle and decision assembly.
+The bounded in-process runner owns execution. The kernel owns business
+transitions and Monte Carlo aggregation; `scenarios` owns paired comparison,
+and `reporting` owns evidence-linked recommendations and briefs.
 
 ## Backend boundaries
 
@@ -67,9 +77,13 @@ The API returns `202 Accepted` for experiment creation. Lifecycle states are `qu
 
 ## API surface
 
-The implemented public resources are:
+The principal public and protected resources are:
 
+- `GET /health` — public, dependency-free process liveness
 - `GET /api/v1/health`
+- `GET /ready` — public PostgreSQL and artifact-store readiness
+- `GET /api/v1/system/info` — protected safe release/build metadata
+- `GET /api/v1/system/metrics` — protected bounded process metrics
 - `GET /api/v1/company`
 - `GET /api/v1/baseline`
 - `GET /api/v1/scenarios`
@@ -81,11 +95,43 @@ The implemented public resources are:
 - `GET /api/v1/experiments/{experiment_id}/report`
 - `GET /api/v1/decisions`
 - `GET /api/v1/frontier`
-- `GET /health` for process liveness
 
-Scenario and decision collections are bounded and cursor-aware. Errors use `application/problem+json` with stable `code`, `detail`, `trace_id` and field violations. `Idempotency-Key` prevents duplicate experiment creation and returns a conflict if reused for different inputs. A candidate experiment requires a completed baseline with the same seed and replication count.
+The calibration, optimization, adaptive-policy, decision-ledger and monitoring
+routers extend the same `/api/v1` contract. Scenario and decision collections
+are bounded and cursor-aware. Errors use `application/problem+json` with stable
+`code`, `detail`, `trace_id` and field violations. `Idempotency-Key` prevents
+duplicate experiment creation and returns a conflict if reused for different
+inputs. A candidate experiment requires a completed baseline with the same seed
+and replication count.
 
-Production mode requires `X-API-Key` on every business resource, disables interactive OpenAPI surfaces, validates host headers and enforces request-size and simulation-period budgets. The supplied Nginx proxy injects the key server-side so browser code never persists it. Mutating requests emit payload-free audit events with principal, route, status and trace ID.
+Production mode requires `X-API-Key` on every business and system-inspection
+resource, while `/health`, `/api/v1/health` and `/ready` remain public for
+orchestrators. Production disables interactive OpenAPI surfaces, validates host
+headers and enforces request-size and simulation-period budgets. The supplied
+Nginx proxy injects the key server-side so browser code never persists it.
+Mutating requests emit payload-free audit events with principal, route, status
+and trace ID.
+
+## Security and operations contracts
+
+v0.5 gives process health, dependency health and operator evidence distinct
+contracts:
+
+| Contract | Meaning | Failure behaviour |
+| --- | --- | --- |
+| `/health` | The FastAPI process can answer HTTP | Always dependency-free; returns only `{"status":"ok"}` |
+| `/ready` | PostgreSQL answers `SELECT 1` and the artifact directory passes an exclusive write, `fsync`, read and cleanup probe | Returns RFC 9457 `503 service_not_ready` without dependency details |
+| `/api/v1/system/info` | Package version, deployment environment, optional validated Git commit and implemented capability identifiers | Requires the configured principal |
+| `/api/v1/system/metrics` | Process uptime plus aggregate HTTP count and duration | Requires the configured principal; labels are bounded to method, registered route template and status family |
+
+Every API response receives `nosniff`, `no-referrer`, `DENY` framing, a
+restrictive browser permissions policy and `Cache-Control: no-store`. Unknown
+paths are aggregated as `unmatched`; metric labels never contain scenario,
+tenant, user or trace identifiers. Metrics are intentionally process-local and
+reset on restart.
+
+The exact startup, probe, backup, restore, shutdown, audit, triage and rollback
+procedures are in the [operator runbook](operations.md).
 
 ## Reproducibility boundary
 
@@ -103,19 +149,23 @@ The backend Dockerfile uses a Python 3.12 multi-stage build, copies only the ins
 
 The plugin registry supports demand, operations, finance, risk metric, optimization and report-section capabilities. Manifests declare SemVer identity, inclusive engine compatibility and scalar configuration fields. Runtime adapters revalidate inputs and outputs at each call. Plugins receive immutable typed evidence—not database sessions, request objects or mutable engine state.
 
-0.2 uses explicit registration. Entry-point discovery, process isolation and a stable external SDK are later release concerns.
+v0.5 uses explicit registration. Entry-point discovery, process isolation and a
+stable external SDK are later release concerns.
 
 ## Known architectural gaps
 
 - In-process execution cannot provide horizontal worker failover.
 - The filesystem artifact adapter is single-node unless mounted on shared durable storage.
 - API-key authentication is single-tenant; OIDC, role authorization, tenancy and approval separation are not implemented.
-- Readiness is not yet separated from the `/health` liveness endpoint.
+- Operational metrics are process-local JSON aggregates, not a distributed telemetry backend.
 - Cross-origin development requires a constrained CORS allowlist; production should prefer the supplied same-origin frontend proxy.
 
-## Governed decision loop (v0.3)
+## Governed decision loop
 
-v0.3 adds a pure `analytics` layer alongside `domain` and `simulation`, held to the same import contract: it never imports delivery infrastructure. It turns operating history into an operational decision system.
+Introduced in v0.3 and retained in v0.5, the pure `analytics` layer sits
+alongside `domain` and `simulation` under the same import contract: it never
+imports delivery infrastructure. It turns operating history into an
+operational decision system.
 
 ```mermaid
 flowchart TD
