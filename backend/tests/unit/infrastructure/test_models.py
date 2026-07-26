@@ -130,9 +130,15 @@ def test_experiment_schema_has_required_constraints_and_indexes() -> None:
         status in check_constraints["ck_experiments_status"]
         for status in ("queued", "running", "completed", "failed")
     )
-    assert ("scenarios.scenario_id",) in foreign_keys
-    assert ("experiments.id",) in foreign_keys
-    assert ("idempotency_key",) in unique_columns
+    assert (
+        "scenarios.tenant_id",
+        "scenarios.scenario_id",
+    ) in foreign_keys
+    assert (
+        "experiments.tenant_id",
+        "experiments.id",
+    ) in foreign_keys
+    assert ("tenant_id", "idempotency_key") in unique_columns
     assert {
         "ix_experiments_scenario_id",
         "ix_experiments_baseline_experiment_id",
@@ -142,12 +148,102 @@ def test_experiment_schema_has_required_constraints_and_indexes() -> None:
     } <= indexes.keys()
     queued_index = indexes["ix_experiments_queued_created_at"]
     assert tuple(column.name for column in queued_index.columns) == (
+        "tenant_id",
         "created_at",
         "id",
     )
     assert str(queued_index.dialect_options["postgresql"]["where"]) == (
         "status = 'queued'"
     )
+
+
+def test_every_business_table_has_tenant_ownership_and_same_tenant_links() -> None:
+    from sqlalchemy import ForeignKeyConstraint
+
+    from openenterprise_twin.infrastructure.models import Base
+
+    expected_tables = {
+        "scenarios",
+        "experiments",
+        "decisions",
+        "decision_events",
+        "historical_datasets",
+        "calibrations",
+        "optimizations",
+        "monitoring_reports",
+    }
+    for table_name in expected_tables:
+        table = Base.metadata.tables[table_name]
+        assert "tenant_id" in table.c
+        assert not table.c.tenant_id.nullable
+
+    assert tuple(
+        column.name
+        for column in Base.metadata.tables["scenarios"].primary_key.columns
+    ) == ("tenant_id", "scenario_id")
+    assert tuple(
+        column.name
+        for column in Base.metadata.tables["decisions"].primary_key.columns
+    ) == ("tenant_id", "decision_id")
+    assert tuple(
+        column.name
+        for column in Base.metadata.tables[
+            "historical_datasets"
+        ].primary_key.columns
+    ) == ("tenant_id", "dataset_id")
+    assert tuple(
+        column.name
+        for column in Base.metadata.tables["calibrations"].primary_key.columns
+    ) == ("tenant_id", "calibration_id")
+
+    expected_composite_links = {
+        (
+            ("experiments", "tenant_id", "scenario_id"),
+            ("scenarios.tenant_id", "scenarios.scenario_id"),
+        ),
+        (
+            ("experiments", "tenant_id", "baseline_experiment_id"),
+            ("experiments.tenant_id", "experiments.id"),
+        ),
+        (
+            ("decision_events", "tenant_id", "decision_id"),
+            ("decisions.tenant_id", "decisions.decision_id"),
+        ),
+        (
+            ("calibrations", "tenant_id", "dataset_id"),
+            (
+                "historical_datasets.tenant_id",
+                "historical_datasets.dataset_id",
+            ),
+        ),
+        (
+            ("monitoring_reports", "tenant_id", "decision_id"),
+            ("decisions.tenant_id", "decisions.decision_id"),
+        ),
+    }
+    actual_links = set()
+    for table_name in expected_tables:
+        table = Base.metadata.tables[table_name]
+        for constraint in table.constraints:
+            if not isinstance(constraint, ForeignKeyConstraint):
+                continue
+            actual_links.add(
+                (
+                    (
+                        table_name,
+                        *(column.name for column in constraint.columns),
+                    ),
+                    tuple(
+                        element.target_fullname
+                        for element in constraint.elements
+                    ),
+                )
+            )
+    assert expected_composite_links <= actual_links
+
+    for table in Base.metadata.tables.values():
+        for index in table.indexes:
+            assert next(iter(index.columns)).name == "tenant_id"
 
 
 def test_domain_facing_names_alias_canonical_storage_attributes() -> None:
@@ -214,7 +310,10 @@ def test_sqlite_session_round_trips_records_with_aware_timestamps() -> None:
         session.add(experiment)
 
     with session_factory() as session:
-        stored_scenario = session.get(ScenarioRecord, "baseline")
+        stored_scenario = session.get(
+            ScenarioRecord,
+            ("default", "baseline"),
+        )
         stored_experiment = session.get(ExperimentRecord, experiment.id)
 
     assert stored_scenario is not None
@@ -419,6 +518,66 @@ def test_sqlite_enforces_scenario_foreign_key() -> None:
         session.add(
             ExperimentRecord(
                 scenario_id="missing",
+                seed=1,
+                replication_count=1,
+                request_payload={},
+            )
+        )
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+    engine.dispose()
+
+
+def test_sqlite_allows_same_public_id_but_rejects_cross_tenant_link() -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    from openenterprise_twin.infrastructure.database import (
+        create_database_engine,
+        create_session_factory,
+    )
+    from openenterprise_twin.infrastructure.models import (
+        Base,
+        ExperimentRecord,
+        ScenarioRecord,
+    )
+    from openenterprise_twin.infrastructure.settings import Settings
+
+    engine = create_database_engine(
+        Settings(database_url="sqlite+pysqlite:///:memory:", _env_file=None)
+    )
+    Base.metadata.create_all(engine)
+    session_factory = create_session_factory(engine)
+
+    with session_factory.begin() as session:
+        for tenant_id in ("tenant-a", "tenant-b"):
+            session.add(
+                ScenarioRecord(
+                    tenant_id=tenant_id,
+                    scenario_id="shared-scenario",
+                    name=f"Scenario for {tenant_id}",
+                    version="0.6.0",
+                    schema="0.6.0",
+                    payload={},
+                )
+            )
+
+    with session_factory.begin() as session:
+        session.add(
+            ExperimentRecord(
+                tenant_id="tenant-a",
+                scenario_id="shared-scenario",
+                seed=1,
+                replication_count=1,
+                request_payload={},
+            )
+        )
+
+    with session_factory() as session:
+        session.add(
+            ExperimentRecord(
+                tenant_id="tenant-c",
+                scenario_id="shared-scenario",
                 seed=1,
                 replication_count=1,
                 request_payload={},

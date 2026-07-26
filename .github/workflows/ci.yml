@@ -95,6 +95,7 @@ jobs:
           python -m alembic upgrade head
       - name: Seed Northstar and verify PostgreSQL-backed API
         env:
+          OPENENTERPRISE_TWIN_AUTHENTICATION_MODE: api_key
           OPENENTERPRISE_TWIN_API_KEY: ci-only-public-test-key-0000000000000000
           OPENENTERPRISE_TWIN_BUILD_COMMIT: ${{ github.sha }}
         run: |

@@ -41,6 +41,7 @@ from openenterprise_twin.domain.ledger import (
 )
 from openenterprise_twin.domain.scenario import Scenario
 from openenterprise_twin.infrastructure.models import (
+    DEFAULT_TENANT_ID,
     CalibrationRecord,
     DecisionEventRecord,
     DecisionLedgerRecord,
@@ -57,7 +58,10 @@ class ScenarioRepository:
         self._session = session
 
     def get(self, scenario_id: str) -> ScenarioRecord | None:
-        return self._session.get(ScenarioRecord, scenario_id)
+        return self._session.get(
+            ScenarioRecord,
+            (DEFAULT_TENANT_ID, scenario_id),
+        )
 
     def list(
         self,
@@ -499,7 +503,10 @@ class SqlDecisionLedgerRepository:
     def _load(
         self, session: Session, decision_id: str
     ) -> DecisionSnapshot | None:
-        record = session.get(DecisionLedgerRecord, decision_id)
+        record = session.get(
+            DecisionLedgerRecord,
+            (DEFAULT_TENANT_ID, decision_id),
+        )
         if record is None:
             return None
         events = tuple(
@@ -574,14 +581,20 @@ class SqlDatasetRepository:
 
     def get(self, dataset_id: str) -> HistoricalDataset | None:
         with self._session_factory() as session:
-            record = session.get(HistoricalDatasetRecord, dataset_id)
+            record = session.get(
+                HistoricalDatasetRecord,
+                (DEFAULT_TENANT_ID, dataset_id),
+            )
             if record is None:
                 return None
             return HistoricalDataset.model_validate(record.payload)
 
     def get_quality(self, dataset_id: str) -> DataQualityReport | None:
         with self._session_factory() as session:
-            record = session.get(HistoricalDatasetRecord, dataset_id)
+            record = session.get(
+                HistoricalDatasetRecord,
+                (DEFAULT_TENANT_ID, dataset_id),
+            )
             if record is None:
                 return None
             return DataQualityReport.model_validate(record.quality)
@@ -650,7 +663,10 @@ class SqlCalibrationRepository:
 
     def get(self, calibration_id: str) -> StoredCalibration | None:
         with self._session_factory() as session:
-            record = session.get(CalibrationRecord, calibration_id)
+            record = session.get(
+                CalibrationRecord,
+                (DEFAULT_TENANT_ID, calibration_id),
+            )
             if record is None:
                 return None
             return self._to_stored(record)
