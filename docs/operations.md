@@ -212,7 +212,8 @@ the migrations required by the selected application release, and then run
 readiness.
 
 ```bash
-backup_dir=outputs/backups/<timestamp>
+set -euo pipefail
+backup_dir="outputs/backups/<timestamp>"
 shasum -a 256 --check "${backup_dir}/SHA256SUMS"
 
 docker compose exec -T db pg_restore \
@@ -224,23 +225,99 @@ docker compose exec -T db pg_restore \
   --no-privileges \
   < "${backup_dir}/postgres.dump"
 
-artifact_dir="${OPENENTERPRISE_TWIN_ARTIFACT_DIRECTORY:-artifacts}"
-case "${artifact_dir}" in
-  ""|"/"|".") echo "Refusing unsafe artifact directory" >&2; exit 1 ;;
+configured_artifact_dir="${OPENENTERPRISE_TWIN_ARTIFACT_DIRECTORY:?set an absolute artifact directory}"
+case "${configured_artifact_dir}" in
+  /*) ;;
+  *) echo "Artifact directory must be absolute" >&2; exit 1 ;;
 esac
-rm -rf "${artifact_dir}"
-mkdir -p "$(dirname "${artifact_dir}")"
-tar --extract --gzip \
-  --file="${backup_dir}/artifacts.tar.gz" \
-  --directory="$(dirname "${artifact_dir}")"
+test "${configured_artifact_dir}" != "/" || {
+  echo "Refusing filesystem root" >&2
+  exit 1
+}
+test ! -L "${configured_artifact_dir}" || {
+  echo "Refusing a symlinked artifact directory" >&2
+  exit 1
+}
+
+configured_parent="$(dirname "${configured_artifact_dir}")"
+artifact_name="$(basename "${configured_artifact_dir}")"
+case "${artifact_name}" in
+  ""|"."|"..") echo "Refusing unsafe artifact basename" >&2; exit 1 ;;
+esac
+test -d "${configured_parent}" && test ! -L "${configured_parent}" || {
+  echo "Artifact parent must be an existing real directory" >&2
+  exit 1
+}
+artifact_parent="$(cd "${configured_parent}" && pwd -P)"
+artifact_dir="${artifact_parent}/${artifact_name}"
+test ! -e "${artifact_dir}" || test -d "${artifact_dir}" || {
+  echo "Artifact target exists but is not a directory" >&2
+  exit 1
+}
+restore_stage="$(mktemp -d "${artifact_parent}/.artifact-restore.XXXXXX")"
+trap 'rm -rf "${restore_stage}"' EXIT
+archive="${backup_dir}/artifacts.tar.gz"
+
+.venv/bin/python - "${archive}" "${restore_stage}" "${artifact_name}" <<'PY'
+from pathlib import Path, PurePosixPath
+import sys
+import tarfile
+
+archive = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+artifact_name = sys.argv[3]
+
+with tarfile.open(archive, mode="r:gz") as bundle:
+    for member in bundle.getmembers():
+        path = PurePosixPath(member.name)
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or not path.parts
+            or path.parts[0] != artifact_name
+            or member.issym()
+            or member.islnk()
+            or member.isdev()
+            or member.isfifo()
+        ):
+            raise SystemExit(f"unsafe artifact member: {member.name!r}")
+    bundle.extractall(destination, filter="data")
+PY
+
+restored_artifacts="${restore_stage}/${artifact_name}"
+test -d "${restored_artifacts}" || {
+  echo "Archive does not contain the expected artifact root" >&2
+  rm -rf "${restore_stage}"
+  exit 1
+}
+
+previous_artifacts="${artifact_dir}.pre-restore.$(date -u +%Y%m%dT%H%M%SZ)"
+test ! -e "${previous_artifacts}" || {
+  echo "Pre-restore path already exists" >&2
+  rm -rf "${restore_stage}"
+  exit 1
+}
+if test -e "${artifact_dir}"; then
+  mv "${artifact_dir}" "${previous_artifacts}"
+fi
+if ! mv "${restored_artifacts}" "${artifact_dir}"; then
+  test ! -e "${previous_artifacts}" ||
+    mv "${previous_artifacts}" "${artifact_dir}"
+  exit 1
+fi
+rm -rf "${restore_stage}"
+trap - EXIT
 
 cd backend
 ../.venv/bin/python -m alembic upgrade head
 ```
 
-The `rm -rf` command is intentionally limited to the configured artifact
-directory; validate that value before executing a restore. Do not merge
-artifacts from unrelated backups.
+The restore requires an absolute, non-symlinked artifact root, rejects archive
+path traversal and links, stages extraction beside the target, and renames the
+current directory instead of deleting it. Keep the `.pre-restore.<timestamp>`
+directory until digest validation and readiness pass, then archive or remove it
+under the normal retention policy. Do not merge artifacts from unrelated
+backups.
 
 ## Graceful shutdown
 

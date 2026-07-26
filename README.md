@@ -12,11 +12,11 @@ keeps the evidence required to defend the decision.**
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)](docker-compose.yml)
 [![License](https://img.shields.io/badge/License-Apache--2.0-2E7D32)](LICENSE)
 
-[Run flagship demo](#run-the-flagship-demo) ·
-[Inspect architecture](docs/architecture.md) ·
+[Run the flagship demo](#run-the-flagship-demo) ·
+[Inspect the architecture](docs/architecture.md) ·
 [Review security posture](docs/OpenEnterprise-Twin-threat-model.md) ·
-[Explore API](docs/architecture.md#api-surface) ·
-[See enterprise roadmap](docs/superpowers/specs/2026-07-26-enterprise-grade-roadmap-design.md)
+[Explore the API](docs/architecture.md#api-surface) ·
+[See the enterprise roadmap](docs/superpowers/specs/2026-07-26-enterprise-grade-roadmap-design.md)
 
 </div>
 

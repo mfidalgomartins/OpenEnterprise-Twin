@@ -58,7 +58,7 @@ flowchart LR
 | T10 | Stale or fabricated executive evidence | Governance failure | Briefs cite only computed metric IDs and carry model, assumptions, seed, replication, plugin and digest provenance | Export audit logs to append-only retention for regulated use |
 | T11 | Dependency or container compromise | Code execution | Locked npm install, bounded Python versions, non-root backend image, minimal multi-stage images and CI security scanning | Pin reviewed release digests and sign production images |
 | T12 | Sensitive data leaked in logs, errors or metrics | Confidentiality loss | Stable problem details suppress stack traces; audit records omit payloads and keys; metrics aggregate only method, registered route template and status family | Apply central-log access controls and retention policy |
-| T13 | Operational endpoints disclose topology or secrets | Reconnaissance and credential disclosure | `/health` returns process status only; `/ready` returns a uniform RFC 9457 failure; build metadata and bounded metrics require authentication and expose no URLs, credentials, IDs or payloads | Restrict operational endpoints at ingress and monitor repeated probe failures |
+| T13 | Operational endpoints disclose topology or secrets | Reconnaissance and credential disclosure | `/health` returns process status only; `/ready` returns a uniform RFC 9457 failure; build metadata and bounded metrics require authentication and expose no URLs, credentials, business identifiers or payloads | Restrict operational endpoints at ingress and monitor repeated probe failures |
 
 ## Security invariants
 
