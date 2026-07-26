@@ -6,7 +6,10 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from openenterprise_twin.api.observability import OperationalMetrics
+from openenterprise_twin.api.observability import (
+    OperationalMetrics,
+    RegisteredRouteResolver,
+)
 
 _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
@@ -17,10 +20,6 @@ _SECURITY_HEADERS = {
     ),
     "Cache-Control": "no-store",
 }
-_KNOWN_HTTP_METHODS = frozenset(
-    {"DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"}
-)
-
 
 class RequestBodyTooLargeError(Exception):
     """Raised internally when a streaming request crosses the configured limit."""
@@ -29,9 +28,16 @@ class RequestBodyTooLargeError(Exception):
 class OperationalMetricsMiddleware:
     """Record completed HTTP requests using registered routes only."""
 
-    def __init__(self, app: ASGIApp, *, metrics: OperationalMetrics) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        metrics: OperationalMetrics,
+        route_resolver: RegisteredRouteResolver,
+    ) -> None:
         self.app = app
         self.metrics = metrics
+        self.route_resolver = route_resolver
 
     async def __call__(
         self,
@@ -57,8 +63,11 @@ class OperationalMetricsMiddleware:
         finally:
             if status_code is not None:
                 self.metrics.record_http(
-                    method=_metric_method(scope["method"]),
-                    route=_metric_route(scope),
+                    method=scope["method"],
+                    route=self.route_resolver.resolve(
+                        method=scope["method"],
+                        path=_route_path(scope),
+                    ),
                     status_code=status_code,
                     duration_seconds=monotonic() - started_at,
                 )
@@ -90,14 +99,20 @@ class SecurityHeadersMiddleware:
         await self.app(scope, receive, apply_headers)
 
 
-def _metric_method(method: str) -> str:
-    return method if method in _KNOWN_HTTP_METHODS else "OTHER"
-
-
-def _metric_route(scope: Scope) -> str:
-    route = scope.get("route")
-    route_path = getattr(route, "path", None)
-    return route_path if isinstance(route_path, str) else "unmatched"
+def _route_path(scope: Scope) -> str:
+    path = scope.get("path")
+    if not isinstance(path, str):
+        return ""
+    root_path = scope.get("root_path")
+    if not isinstance(root_path, str):
+        root_path = ""
+    if not root_path or not path.startswith(root_path):
+        return path
+    if path == root_path:
+        return ""
+    if path[len(root_path)] == "/":
+        return path[len(root_path) :]
+    return path
 
 
 class RequestBodyLimitMiddleware:

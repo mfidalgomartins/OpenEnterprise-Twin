@@ -58,3 +58,33 @@ Completed and committed after focused TDD, full test-suite verification, static 
 - Metrics are intentionally process-local and reset on restart. They are suitable for a bounded operational endpoint, not long-term telemetry retention or cross-worker aggregation.
 - A request to `/api/v1/system/metrics` is recorded after its snapshot is generated, so it appears in the next scrape rather than its own response. This avoids mutating the response while it is being sent.
 - Requests rejected upstream of this FastAPI process (for example by a proxy or WAF) cannot be observed or header-modified by application middleware.
+
+## Task 4 review fixes
+
+Implemented the changes required by `task-4-review.md` without entering Task 5 scope.
+
+- `OperationalMetrics` is now configured with an immutable registered-route-template set and enforces the bounded-label invariant inside `record_http()`:
+  - supported methods are normalized to uppercase;
+  - unsupported methods become `OTHER`;
+  - routes outside the registered set become `unmatched`;
+  - statuses outside 100–599 are ignored and create no bucket.
+- Added a frozen `RegisteredRouteResolver` built from FastAPI's effective route contexts after all routers are included. It copies only registered templates, methods, and compiled path regexes.
+- The metrics middleware resolves every request against that immutable resolver. An early 413 can therefore be attributed to `/api/v1/scenarios` before FastAPI sets `scope["route"]`; raw request paths are only compared and are never stored.
+- Added negative unit coverage for arbitrary routes, unsupported and lowercase methods, and out-of-range statuses. Added unit coverage for included-router resolution and an integration regression for oversized `POST /api/v1/scenarios`.
+
+### Review-fix TDD evidence
+
+1. Accumulator RED: `tests/unit/api/test_observability.py` failed 7 tests because `registered_route_templates` was not yet supported.
+2. Accumulator GREEN: `7 passed in 0.01s`.
+3. Resolver RED: unit collection failed because `RegisteredRouteResolver` did not exist.
+4. Early-413 RED: the regression failed with no `/api/v1/scenarios` 4xx bucket.
+5. Final focused GREEN: `18 passed in 0.59s`.
+
+### Review-fix final verification
+
+| Command | Result |
+| --- | --- |
+| `../.venv/bin/python -m pytest tests -q` | `442 passed, 1 skipped` in 64.74 seconds; PostgreSQL integration skipped because its migrated PostgreSQL 16 CI service is unavailable. |
+| `../.venv/bin/ruff check src tests` | `All checks passed!` |
+| `../.venv/bin/python -m mypy src` | `Success: no issues found in 64 source files` |
+| `git diff --check` | No whitespace errors |

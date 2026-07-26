@@ -305,6 +305,39 @@ def test_security_headers_cover_api_response_classes(tmp_path: Path) -> None:
         } == _SECURITY_HEADERS
 
 
+def test_oversized_request_records_registered_route_template(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path).model_copy(
+        update={"max_request_body_bytes": 8}
+    )
+
+    with TestClient(create_app(settings)) as test_client:
+        oversized = test_client.post(
+            "/api/v1/scenarios",
+            content=b"x" * 9,
+            headers={"Content-Type": "application/json"},
+        )
+        metrics_response = test_client.get("/api/v1/system/metrics")
+
+    assert oversized.status_code == 413
+    assert metrics_response.status_code == 200
+    http_requests = metrics_response.json()["http_requests"]
+    recorded = next(
+        item
+        for item in http_requests
+        if item["method"] == "POST"
+        and item["route"] == "/api/v1/scenarios"
+        and item["status_family"] == "4xx"
+    )
+    assert recorded["count"] == 1
+    assert recorded["duration_seconds_total"] >= 0
+    assert not any(
+        item["method"] == "POST" and item["route"] == "unmatched"
+        for item in http_requests
+    )
+
+
 def _assert_safe_not_ready(response: Response, settings: Settings) -> None:
     assert response.status_code == 503
     assert response.headers["content-type"] == "application/problem+json"
