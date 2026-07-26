@@ -136,10 +136,32 @@ def test_run_autopilot_demo_drives_the_full_loop(tmp_path: Path) -> None:
         replication_workers_per_experiment=1,
         max_optimization_evaluations=120,
     )
-    app = create_app(settings)
+    analyst_app = create_app(
+        settings.model_copy(
+            update={
+                "local_subject": "cfo",
+                "local_roles": ("admin",),
+            }
+        )
+    )
+    approver_app = create_app(
+        settings.model_copy(
+            update={
+                "local_subject": "ceo",
+                "local_roles": ("approver",),
+            }
+        )
+    )
 
-    with TestClient(app) as client:
-        result = run_autopilot_demo(client, seed=731)
+    with (
+        TestClient(analyst_app) as client,
+        TestClient(approver_app) as approver_client,
+    ):
+        result = run_autopilot_demo(
+            client,
+            seed=731,
+            approver_client=approver_client,
+        )
 
     assert result.quality_score == 1.0
     assert result.credibility_band == "decision_grade"

@@ -254,7 +254,6 @@ def test_decision_transition_authorization_depends_on_target(
             json={
                 "expected_version": 1,
                 "target": target,
-                "actor": "forged-body-actor",
             },
         )
 

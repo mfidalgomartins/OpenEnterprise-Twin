@@ -8,7 +8,7 @@ deployment limits so requests stay responsive without a separate job runner.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request, Response, Security, status
 from fastapi.responses import PlainTextResponse
@@ -396,12 +396,18 @@ class DecisionCreateRequest(LoopModel):
     content: DecisionContent
 
 
+class ApprovalCommand(LoopModel):
+    decision: Literal["approve", "reject"]
+    occurred_at: datetime
+    approved_content_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    note: str | None = Field(default=None, max_length=280)
+
+
 class DecisionTransitionRequest(LoopModel):
     expected_version: int = Field(ge=1)
     target: DecisionState
-    actor: str = Field(min_length=1, max_length=128)
     note: str | None = Field(default=None, max_length=280)
-    approval: ApprovalRecord | None = None
+    approval: ApprovalCommand | None = None
 
 
 class DecisionSnapshotResponse(LoopModel):
@@ -426,11 +432,15 @@ def create_decision(
     request: DecisionCreateRequest,
     response: Response,
     services: ServicesDependency,
+    principal: PrincipalDependency,
 ) -> DecisionSnapshotResponse:
+    content = request.content.model_copy(
+        update={"owner": principal.subject}
+    )
     snapshot = services.decision_ledger.create_decision(
         decision_id=request.decision_id,
-        content=request.content,
-        actor=request.content.owner,
+        content=content,
+        actor=principal.subject,
         occurred_at=datetime.now(UTC),
     )
     response.headers["Location"] = f"/api/v1/ledger/decisions/{snapshot.decision_id}"
@@ -474,14 +484,22 @@ def transition_decision(
         authorize_principal(principal, "approver", "admin")
     else:
         authorize_principal(principal, "analyst", "admin")
+    approval = (
+        ApprovalRecord(
+            approver=principal.subject,
+            **request.approval.model_dump(),
+        )
+        if request.approval is not None
+        else None
+    )
     snapshot = services.decision_ledger.transition(
         decision_id=decision_id,
         expected_version=request.expected_version,
         target=request.target,
-        actor=request.actor,
+        actor=principal.subject,
         occurred_at=datetime.now(UTC),
         note=request.note,
-        approval=request.approval,
+        approval=approval,
     )
     return _snapshot_response(snapshot)
 

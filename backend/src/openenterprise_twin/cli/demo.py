@@ -353,6 +353,7 @@ def run_autopilot_demo(
     client: httpx.Client,
     *,
     seed: int = DEFAULT_MASTER_SEED,
+    approver_client: httpx.Client | None = None,
 ) -> AutopilotResult:
     """Drive the full closed loop through the API and return its evidence."""
 
@@ -413,12 +414,17 @@ def run_autopilot_demo(
         },
     )
     content = _demo_decision_content()
-    _post_json(
+    decision = _post_json(
         client,
         "/api/v1/ledger/decisions",
         {"decision_id": "northstar-pricing", "content": content},
     )
-    _walk_decision_to_monitoring(client, "northstar-pricing", content)
+    _walk_decision_to_monitoring(
+        client,
+        "northstar-pricing",
+        decision["content"],
+        approver_client=approver_client or client,
+    )
     monitoring = _post_json(
         client,
         "/api/v1/ledger/decisions/northstar-pricing/outcomes",
@@ -482,31 +488,31 @@ def _walk_decision_to_monitoring(
     client: httpx.Client,
     decision_id: str,
     content: dict[str, object],
+    *,
+    approver_client: httpx.Client,
 ) -> None:
     base = f"/api/v1/ledger/decisions/{decision_id}/transitions"
     _post_json(client, base, {
-        "expected_version": 1, "target": "evidence_ready", "actor": "cfo"
+        "expected_version": 1, "target": "evidence_ready"
     })
     _post_json(client, base, {
-        "expected_version": 2, "target": "under_review", "actor": "cfo"
+        "expected_version": 2, "target": "under_review"
     })
     digest = DecisionContent.model_validate(content).content_digest()
-    _post_json(client, base, {
+    _post_json(approver_client, base, {
         "expected_version": 3,
         "target": "approved",
-        "actor": "ceo",
         "approval": {
-            "approver": "ceo",
             "decision": "approve",
             "occurred_at": "2026-07-23T12:00:00Z",
             "approved_content_digest": digest,
         },
     })
     _post_json(client, base, {
-        "expected_version": 4, "target": "implemented", "actor": "coo"
+        "expected_version": 4, "target": "implemented"
     })
     _post_json(client, base, {
-        "expected_version": 5, "target": "monitoring", "actor": "coo"
+        "expected_version": 5, "target": "monitoring"
     })
 
 
