@@ -26,7 +26,7 @@ OPENENTERPRISE_TWIN_ARTIFACT_DIRECTORY ?= artifacts
 OPENENTERPRISE_TWIN_EXPERIMENT_WORKERS ?= 2
 OPENENTERPRISE_TWIN_REPLICATION_WORKERS_PER_EXPERIMENT ?= 4
 OPENENTERPRISE_TWIN_EXPERIMENT_SHUTDOWN_TIMEOUT_SECONDS ?= 5
-OPENENTERPRISE_TWIN_JOB_WORKER_MODE ?= embedded
+OPENENTERPRISE_TWIN_JOB_WORKER_MODE ?= external
 OPENENTERPRISE_TWIN_JOB_WORKERS ?= 2
 OPENENTERPRISE_TWIN_JOB_POLL_INTERVAL_SECONDS ?= 0.25
 OPENENTERPRISE_TWIN_JOB_LEASE_SECONDS ?= 30
@@ -100,7 +100,8 @@ seed: migrate ## Migrate and seed the versioned Northstar baseline scenario.
 
 dev: install seed ## Start PostgreSQL, API and frontend with Northstar seeded.
 	@set -euo pipefail; \
-	(cd backend && exec ../$(PYTHON) -m uvicorn openenterprise_twin.api.app:create_app \
+	(cd backend && OPENENTERPRISE_TWIN_JOB_WORKER_MODE=embedded \
+		exec ../$(PYTHON) -m uvicorn openenterprise_twin.api.app:create_app \
 		--factory --reload --host $(DEV_HOST) --port $(API_PORT)) & api_pid=$$!; \
 	(cd frontend && exec env VITE_API_BASE_URL='$(VITE_API_BASE_URL)' \
 		npm run dev -- --host $(DEV_HOST) --port $(FRONTEND_PORT)) & frontend_pid=$$!; \

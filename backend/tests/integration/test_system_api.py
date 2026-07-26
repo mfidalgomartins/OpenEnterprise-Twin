@@ -207,10 +207,12 @@ def test_system_info_is_protected_and_safe(
             "calibration",
             "decision_ledger",
             "durable_jobs",
+            "identity_rbac",
             "monitoring",
             "optimization",
             "paired_simulation",
             "secure_csv",
+            "tenant_isolation",
         ],
     }
     assert "database_url" not in response.text

@@ -37,10 +37,12 @@ _CAPABILITIES = (
     "calibration",
     "decision_ledger",
     "durable_jobs",
+    "identity_rbac",
     "monitoring",
     "optimization",
     "paired_simulation",
     "secure_csv",
+    "tenant_isolation",
 )
 
 
