@@ -155,7 +155,6 @@ e2e: install ## Run Playwright, including an isolated full-stack browser flow.
 	@set -euo pipefail; \
 	tmp_dir=$$(mktemp -d); \
 	OIDC_FIXTURE_PORT=$(E2E_OIDC_PORT) \
-	OIDC_ALLOWED_ORIGIN='http://127.0.0.1:4173' \
 		$(PYTHON) backend/tests/fixtures/oidc_server.py \
 		>"$$tmp_dir/oidc.log" 2>&1 & oidc_pid=$$!; \
 	OPENENTERPRISE_TWIN_DATABASE_URL="sqlite+pysqlite:///$$tmp_dir/e2e.db" \

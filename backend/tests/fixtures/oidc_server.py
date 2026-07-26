@@ -6,11 +6,13 @@ import base64
 import hashlib
 import json
 import os
+import re
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from secrets import token_urlsafe
-from urllib.parse import parse_qs, urlencode, urlparse
+from typing import TypedDict
+from urllib.parse import parse_qs, quote, urlparse
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -28,15 +30,79 @@ ROLES = tuple(
     for role in os.getenv("OIDC_ROLES", "analyst,viewer").split(",")
     if role.strip()
 )
-ALLOWED_ORIGIN = os.getenv(
-    "OIDC_ALLOWED_ORIGIN",
-    "http://127.0.0.1:4173",
-)
+ALLOWED_ORIGIN = "http://127.0.0.1:4173"
+CLIENT_ID = "openenterprise-twin-browser"
+REDIRECT_URI = f"{ALLOWED_ORIGIN}/auth/callback"
+POST_LOGOUT_REDIRECT_URI = f"{ALLOWED_ORIGIN}/"
+_HEADER_SAFE_VALUE = re.compile(r"^[A-Za-z0-9._~-]+$")
 
 _private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 _public_jwk = json.loads(RSAAlgorithm.to_jwk(_private_key.public_key()))
 _public_jwk.update({"alg": "RS256", "kid": "e2e-key-1", "use": "sig"})
 _authorization_codes: dict[str, dict[str, str]] = {}
+
+
+class AuthorizationRequest(TypedDict):
+    client_id: str
+    code_challenge: str
+    nonce: str
+    scope: str
+    state: str
+
+
+def _single_value(
+    query: dict[str, list[str]],
+    name: str,
+) -> str | None:
+    values = query.get(name)
+    if values is None or len(values) != 1 or not values[0]:
+        return None
+    return values[0]
+
+
+def _validated_authorization_request(
+    query: dict[str, list[str]],
+) -> AuthorizationRequest | None:
+    client_id = _single_value(query, "client_id")
+    redirect_uri = _single_value(query, "redirect_uri")
+    response_type = _single_value(query, "response_type")
+    challenge_method = _single_value(query, "code_challenge_method")
+    code_challenge = _single_value(query, "code_challenge")
+    state = _single_value(query, "state")
+    nonce = _single_value(query, "nonce") or ""
+    scope = _single_value(query, "scope")
+    if (
+        client_id != CLIENT_ID
+        or redirect_uri != REDIRECT_URI
+        or response_type != "code"
+        or challenge_method != "S256"
+        or scope != "openid profile"
+        or code_challenge is None
+        or state is None
+        or not 43 <= len(code_challenge) <= 128
+        or not 1 <= len(state) <= 512
+        or len(nonce) > 512
+        or _HEADER_SAFE_VALUE.fullmatch(code_challenge) is None
+        or _HEADER_SAFE_VALUE.fullmatch(state) is None
+        or (nonce and _HEADER_SAFE_VALUE.fullmatch(nonce) is None)
+    ):
+        return None
+    return {
+        "client_id": client_id,
+        "code_challenge": code_challenge,
+        "nonce": nonce,
+        "scope": scope,
+        "state": state,
+    }
+
+
+def _validated_logout_destination(
+    query: dict[str, list[str]],
+) -> str | None:
+    destination = _single_value(query, "post_logout_redirect_uri")
+    if destination != POST_LOGOUT_REDIRECT_URI:
+        return None
+    return POST_LOGOUT_REDIRECT_URI
 
 
 def _encode_token(
@@ -104,12 +170,12 @@ class OidcFixtureHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/logout":
             query = parse_qs(parsed.query)
-            destination = query.get(
-                "post_logout_redirect_uri",
-                [ALLOWED_ORIGIN],
-            )[0]
+            destination = _validated_logout_destination(query)
+            if destination is None:
+                self._oauth_error("invalid_request", HTTPStatus.BAD_REQUEST)
+                return
             self.send_response(HTTPStatus.FOUND)
-            self.send_header("Location", destination)
+            self.send_header("Location", POST_LOGOUT_REDIRECT_URI)
             self.end_headers()
             return
         self.send_error(HTTPStatus.NOT_FOUND)
@@ -149,30 +215,20 @@ class OidcFixtureHandler(BaseHTTPRequestHandler):
         )
 
     def _authorize(self, query: dict[str, list[str]]) -> None:
-        required = (
-            "client_id",
-            "redirect_uri",
-            "state",
-            "code_challenge",
-        )
-        if any(not query.get(field, [""])[0] for field in required):
-            self._oauth_error("invalid_request", HTTPStatus.BAD_REQUEST)
-            return
-        redirect_uri = query["redirect_uri"][0]
-        if not redirect_uri.startswith(f"{ALLOWED_ORIGIN}/"):
+        request = _validated_authorization_request(query)
+        if request is None:
             self._oauth_error("invalid_request", HTTPStatus.BAD_REQUEST)
             return
         code = token_urlsafe(24)
         _authorization_codes[code] = {
-            "client_id": query["client_id"][0],
-            "code_challenge": query["code_challenge"][0],
-            "nonce": query.get("nonce", [""])[0],
-            "scope": query.get("scope", ["openid profile"])[0],
+            "client_id": request["client_id"],
+            "code_challenge": request["code_challenge"],
+            "nonce": request["nonce"],
+            "scope": request["scope"],
         }
-        separator = "&" if "?" in redirect_uri else "?"
         location = (
-            f"{redirect_uri}{separator}"
-            + urlencode({"code": code, "state": query["state"][0]})
+            f"{REDIRECT_URI}?code={quote(code, safe='')}"
+            f"&state={quote(request['state'], safe='')}"
         )
         self.send_response(HTTPStatus.FOUND)
         self.send_header("Location", location)
