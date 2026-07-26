@@ -1,7 +1,9 @@
 """Operational readiness and protected build metadata endpoints."""
 
 import os
+from pathlib import Path
 from typing import NoReturn
+from uuid import uuid4
 
 from fastapi import APIRouter, Security
 from sqlalchemy import text
@@ -62,14 +64,24 @@ def get_system_info(settings: SettingsDependency) -> SystemInfo:
 
 
 def _check_artifact_directory(artifact_directory: os.PathLike[str]) -> None:
+    probe_path = Path(artifact_directory) / f".readiness-{uuid4().hex}.tmp"
+    probe_created = False
+    probe_failed = False
     try:
-        is_usable = (
-            os.path.isdir(artifact_directory)
-            and os.access(artifact_directory, os.R_OK | os.W_OK)
-        )
+        with probe_path.open("xb") as probe:
+            probe_created = True
+            probe.write(b"1")
+            probe.flush()
+            os.fsync(probe.fileno())
     except OSError:
-        is_usable = False
-    if not is_usable:
+        probe_failed = True
+    finally:
+        if probe_created:
+            try:
+                probe_path.unlink()
+            except OSError:
+                probe_failed = True
+    if probe_failed:
         _raise_not_ready()
 
 
