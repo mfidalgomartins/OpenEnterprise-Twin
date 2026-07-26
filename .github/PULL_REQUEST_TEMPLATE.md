@@ -2,15 +2,19 @@
 
 Describe the problem, the decision this change enables and what remains deliberately out of scope.
 
-## Evidence
+## Governance impact
 
-- [ ] Behavior changes started with a failing test.
-- [ ] Determinism, ledger invariants and failure paths remain covered.
-- [ ] Model equations, units, assumptions and version impact are documented where relevant.
-- [ ] UI conclusions cite computed evidence and expose uncertainty.
-- [ ] `make lint`, `make test` and `make build` pass locally.
+- [ ] Threat model and trust boundaries were reviewed; updates or a concise N/A rationale are included.
+- [ ] Data/schema migrations include forward and rollback evidence; otherwise marked N/A.
+- [ ] Operational probes, failure modes and runbook impact are covered; otherwise marked N/A.
+- [ ] Deterministic behavior, model assumptions and version implications are documented; otherwise marked N/A.
+- [ ] User, API and operational documentation is updated; otherwise marked N/A.
+
+## Verification and evidence
+
+- [ ] Behavior changes are covered by tests, including failure paths and invariants.
+- [ ] Relevant lint, type, test, build and dependency-audit gates pass.
+- [ ] Exact commands and results are listed below; visual or runtime evidence is attached where relevant.
 - [ ] No secrets, local state or generated test artifacts are included.
 
-## Verification
-
-List the exact commands run and attach visual evidence for user-facing changes.
+Commands and evidence:
