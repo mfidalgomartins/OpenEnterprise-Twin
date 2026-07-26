@@ -75,8 +75,6 @@ jobs:
       OPENENTERPRISE_TWIN_ARTIFACT_DIRECTORY: artifacts
       OPENENTERPRISE_TWIN_EXPERIMENT_WORKERS: "1"
       OPENENTERPRISE_TWIN_REPLICATION_WORKERS_PER_EXPERIMENT: "1"
-      OPENENTERPRISE_TWIN_API_KEY: ci-only-public-test-key-0000000000000000
-      OPENENTERPRISE_TWIN_BUILD_COMMIT: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -96,6 +94,9 @@ jobs:
           python -m alembic downgrade base
           python -m alembic upgrade head
       - name: Seed Northstar and verify PostgreSQL-backed API
+        env:
+          OPENENTERPRISE_TWIN_API_KEY: ci-only-public-test-key-0000000000000000
+          OPENENTERPRISE_TWIN_BUILD_COMMIT: ${{ github.sha }}
         run: |
           mkdir -p backend/test-results
           cd backend
