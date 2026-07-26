@@ -18,8 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -44,7 +44,7 @@ jobs:
           python -m pytest tests/unit -q --junitxml=test-results/backend-unit.xml
       - name: Upload failed backend report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: backend-failure-report
           path: backend/test-results/
@@ -76,8 +76,8 @@ jobs:
       OPENENTERPRISE_TWIN_EXPERIMENT_WORKERS: "1"
       OPENENTERPRISE_TWIN_REPLICATION_WORKERS_PER_EXPERIMENT: "1"
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -121,7 +121,7 @@ jobs:
           python -m pytest tests/integration -q --junitxml=test-results/backend-integration.xml
       - name: Upload failed integration report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: postgres-integration-failure-report
           path: backend/test-results/
@@ -133,8 +133,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -157,7 +157,7 @@ jobs:
         run: npm run build
       - name: Upload failed frontend report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-failure-report
           path: frontend/test-results/
@@ -170,7 +170,7 @@ jobs:
     timeout-minutes: 20
     needs: [backend, frontend]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Build production image
         run: |
           docker build --file backend/Dockerfile --tag openenterprise-twin-api:ci backend
@@ -204,13 +204,13 @@ jobs:
       LIVE_E2E: "1"
       VITE_API_BASE_URL: http://127.0.0.1:8000
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements-dev.lock
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -248,7 +248,7 @@ jobs:
           npm run e2e
       - name: Upload failed E2E report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-failure-report
           path: |
