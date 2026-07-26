@@ -34,6 +34,15 @@ export class ApiError extends Error {
 }
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+let accessToken: string | null = null;
+
+export function setApiAccessToken(token: string | null): void {
+  accessToken = token;
+}
+
+export function clearApiAccessToken(): void {
+  accessToken = null;
+}
 
 function requestHeaders(
   headersInit: HeadersInit | undefined,
@@ -47,6 +56,10 @@ function requestHeaders(
   if (hasBody) {
     headers["Content-Type"] =
       suppliedHeaders["content-type"] ?? "application/json";
+  }
+
+  if (accessToken && suppliedHeaders.authorization === undefined) {
+    headers.Authorization = `Bearer ${accessToken}`;
   }
 
   for (const [name, value] of Object.entries(suppliedHeaders)) {
@@ -74,6 +87,9 @@ export async function apiRequest<T>(
   path: string,
   options: ApiRequestOptions = {},
 ): Promise<T> {
+  if (!path.startsWith("/") || path.startsWith("//")) {
+    throw new TypeError("API paths must be same-origin relative paths");
+  }
   const { body, headers: headersInit, ...requestOptions } = options;
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...requestOptions,

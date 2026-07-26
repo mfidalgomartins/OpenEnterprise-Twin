@@ -4,6 +4,7 @@ import { Router } from "wouter";
 import { memoryLocation } from "wouter/memory-location";
 
 import { AppRoutes } from "../src/app/routes";
+import { AuthenticatedTestSession } from "./testAuth";
 
 const digest = "a".repeat(64);
 
@@ -321,7 +322,9 @@ function renderDecisionRoom() {
   return render(
     <QueryClientProvider client={queryClient}>
       <Router hook={location.hook}>
-        <AppRoutes />
+        <AuthenticatedTestSession>
+          <AppRoutes />
+        </AuthenticatedTestSession>
       </Router>
     </QueryClientProvider>,
   );

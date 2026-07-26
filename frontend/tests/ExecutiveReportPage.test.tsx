@@ -5,6 +5,7 @@ import { Router } from "wouter";
 import { memoryLocation } from "wouter/memory-location";
 
 import { AppRoutes } from "../src/app/routes";
+import { AuthenticatedTestSession } from "./testAuth";
 
 const metricResults = [
   {
@@ -239,7 +240,9 @@ function renderReport(path = "/reports/42") {
   return render(
     <QueryClientProvider client={queryClient}>
       <Router hook={location.hook}>
-        <AppRoutes />
+        <AuthenticatedTestSession>
+          <AppRoutes />
+        </AuthenticatedTestSession>
       </Router>
     </QueryClientProvider>,
   );

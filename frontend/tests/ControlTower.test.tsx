@@ -5,6 +5,7 @@ import { Router } from "wouter";
 import { memoryLocation } from "wouter/memory-location";
 
 import { AppRoutes } from "../src/app/routes";
+import { AuthenticatedTestSession } from "./testAuth";
 
 const company = {
   company_id: "northstar-components",
@@ -172,7 +173,9 @@ function renderControlTower({ frontierFails = false } = {}) {
   return render(
     <QueryClientProvider client={queryClient}>
       <Router hook={location.hook}>
-        <AppRoutes />
+        <AuthenticatedTestSession>
+          <AppRoutes />
+        </AuthenticatedTestSession>
       </Router>
     </QueryClientProvider>,
   );
