@@ -73,6 +73,7 @@ def create_scenario(
     scenario: Scenario,
     response: Response,
     session: SessionDependency,
+    services: ServicesDependency,
 ) -> ScenarioRead:
     try:
         validate_scenario_against_company(scenario, build_northstar_company())
@@ -83,7 +84,7 @@ def create_scenario(
             title="Scenario is incompatible with the company model",
             detail=str(error),
         ) from error
-    repository = ScenarioRepository(session)
+    repository = ScenarioRepository(session, services.tenant_id)
     with session.begin():
         if repository.get(scenario.scenario_id) is not None:
             raise ApiProblemError(
@@ -126,10 +127,11 @@ def get_baseline() -> ScenarioRead:
 @router.get("/scenarios", response_model=tuple[ScenarioRead, ...])
 def list_scenarios(
     session: SessionDependency,
+    services: ServicesDependency,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     after_id: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
 ) -> tuple[ScenarioRead, ...]:
-    repository = ScenarioRepository(session)
+    repository = ScenarioRepository(session, services.tenant_id)
     return tuple(
         _scenario_read(Scenario.model_validate(record.payload))
         for record in repository.list(limit=limit, after_id=after_id)
@@ -137,8 +139,12 @@ def list_scenarios(
 
 
 @router.get("/scenarios/{scenario_id}", response_model=ScenarioRead)
-def get_scenario(scenario_id: str, session: SessionDependency) -> ScenarioRead:
-    record = ScenarioRepository(session).get(scenario_id)
+def get_scenario(
+    scenario_id: str,
+    session: SessionDependency,
+    services: ServicesDependency,
+) -> ScenarioRead:
+    record = ScenarioRepository(session, services.tenant_id).get(scenario_id)
     if record is None:
         raise _scenario_not_found(scenario_id)
     return _scenario_read(Scenario.model_validate(record.payload))
@@ -158,8 +164,8 @@ def create_experiment(
     services: ServicesDependency,
     idempotency_key: IdempotencyKey = None,
 ) -> ExperimentRead:
-    scenarios = ScenarioRepository(session)
-    experiments = ExperimentRepository(session)
+    scenarios = ScenarioRepository(session, services.tenant_id)
+    experiments = ExperimentRepository(session, services.tenant_id)
     created = False
     with session.begin():
         scenario_record = scenarios.get(scenario_id)
@@ -216,7 +222,7 @@ def create_experiment(
 
     if created:
         try:
-            services.experiment_runner.submit(record.id)
+            services.experiment_runner.submit(record.id, services.tenant_id)
         except ExperimentQueueFullError as error:
             with session.begin():
                 queued_record = experiments.get(record.id)
@@ -237,8 +243,11 @@ def create_experiment(
 def get_experiment(
     experiment_id: int,
     session: SessionDependency,
+    services: ServicesDependency,
 ) -> ExperimentRead:
-    record = ExperimentRepository(session).get(experiment_id)
+    record = ExperimentRepository(session, services.tenant_id).get(
+        experiment_id
+    )
     if record is None:
         raise _experiment_not_found(experiment_id)
     return _experiment_read(record)

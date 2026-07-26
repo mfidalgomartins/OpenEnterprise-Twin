@@ -37,7 +37,9 @@ def session_factory() -> Iterator[sessionmaker[Session]]:
 def service(
     session_factory: sessionmaker[Session],
 ) -> DecisionLedgerService:
-    return DecisionLedgerService(SqlDecisionLedgerRepository(session_factory))
+    return DecisionLedgerService(
+        SqlDecisionLedgerRepository(session_factory, "default")
+    )
 
 
 def _content(owner: str = "cfo") -> DecisionContent:
@@ -296,7 +298,7 @@ def test_repository_create_races_surface_as_conflict(
 ) -> None:
     # Bypass the service pre-check to exercise the repository's integrity guard,
     # the path a genuine create-create race would take.
-    repository = SqlDecisionLedgerRepository(session_factory)
+    repository = SqlDecisionLedgerRepository(session_factory, "default")
     content = _content()
     transition = DecisionTransition(
         from_state=None,

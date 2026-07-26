@@ -11,7 +11,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from openenterprise_twin import __version__
 from openenterprise_twin.api.dependencies import (
-    ServicesDependency,
+    AppInfrastructure,
+    InfrastructureDependency,
     SettingsDependency,
     admin_guard,
 )
@@ -43,11 +44,11 @@ _CAPABILITIES = (
 
 @public_system_router.get("/ready", response_model=ReadinessStatus)
 def get_readiness(
-    services: ServicesDependency,
+    infrastructure: InfrastructureDependency,
     settings: SettingsDependency,
 ) -> ReadinessStatus:
     _check_artifact_directory(settings.artifact_directory)
-    _check_database(services)
+    _check_database(infrastructure)
     return ReadinessStatus(
         status="ready",
         checks=ReadinessChecks(artifacts="ready", database="ready"),
@@ -102,9 +103,9 @@ def _check_artifact_directory(artifact_directory: os.PathLike[str]) -> None:
         _raise_not_ready()
 
 
-def _check_database(services: ServicesDependency) -> None:
+def _check_database(infrastructure: AppInfrastructure) -> None:
     try:
-        with services.session_factory() as session:
+        with infrastructure.session_factory() as session:
             session.execute(text("SELECT 1"))
     except SQLAlchemyError:
         _raise_not_ready()

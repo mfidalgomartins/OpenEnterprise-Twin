@@ -30,7 +30,7 @@ from openenterprise_twin.infrastructure.database import (
     create_database_engine,
     create_session_factory,
 )
-from openenterprise_twin.infrastructure.models import Base
+from openenterprise_twin.infrastructure.models import DEFAULT_TENANT_ID, Base
 from openenterprise_twin.infrastructure.repositories import ScenarioRepository
 from openenterprise_twin.infrastructure.settings import Settings
 from openenterprise_twin.reporting.brief import ExecutiveBrief
@@ -141,13 +141,16 @@ def build_flagship_scenario(*, horizon_days: int = 515) -> Scenario:
     )
 
 
-def seed_northstar(session_factory: sessionmaker[Session]) -> bool:
+def seed_northstar(
+    session_factory: sessionmaker[Session],
+    tenant_id: str = DEFAULT_TENANT_ID,
+) -> bool:
     """Persist the baseline scenario once; return whether it was created."""
 
     baseline = build_baseline_scenario()
     expected_payload = baseline.model_dump(mode="json")
     with session_factory() as session, session.begin():
-        repository = ScenarioRepository(session)
+        repository = ScenarioRepository(session, tenant_id)
         existing = repository.get(baseline.scenario_id)
         if existing is None:
             repository.create(baseline)
@@ -168,7 +171,15 @@ def seed_from_settings(settings: Settings | None = None) -> bool:
     try:
         if make_url(resolved_settings.database_url).get_backend_name() == "sqlite":
             Base.metadata.create_all(engine)
-        return seed_northstar(create_session_factory(engine))
+        tenant_id = (
+            resolved_settings.service_account_tenant_id
+            if resolved_settings.authentication_mode == "api_key"
+            else resolved_settings.local_tenant_id
+        )
+        return seed_northstar(
+            create_session_factory(engine),
+            tenant_id,
+        )
     finally:
         engine.dispose()
 

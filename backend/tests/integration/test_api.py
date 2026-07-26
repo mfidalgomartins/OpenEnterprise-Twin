@@ -303,8 +303,8 @@ def test_queue_saturation_does_not_poison_idempotent_retry(
         def __init__(self, **_: object) -> None:
             pass
 
-        def submit(self, experiment_id: int) -> None:
-            del experiment_id
+        def submit(self, experiment_id: int, tenant_id: str) -> None:
+            del experiment_id, tenant_id
             raise ExperimentQueueFullError("experiment execution queue is full")
 
         def recover_pending(self) -> None:

@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from openenterprise_twin import __version__
 from openenterprise_twin.api import system as system_module
 from openenterprise_twin.api.app import create_app
-from openenterprise_twin.api.dependencies import get_services
+from openenterprise_twin.api.dependencies import get_infrastructure
 from openenterprise_twin.api.errors import ApiProblemError
 from openenterprise_twin.infrastructure.settings import Settings
 
@@ -171,7 +171,7 @@ def test_database_probe_failure_returns_safe_problem(tmp_path: Path) -> None:
         app.state.services,
         session_factory=cast(sessionmaker[Session], fail_session_factory),
     )
-    app.dependency_overrides[get_services] = lambda: services
+    app.dependency_overrides[get_infrastructure] = lambda: services
 
     with TestClient(app) as test_client:
         response = test_client.get("/ready")

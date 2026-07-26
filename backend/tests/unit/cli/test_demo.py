@@ -50,7 +50,7 @@ def test_seed_northstar_is_idempotent() -> None:
     assert seed_northstar(session_factory) is False
 
     with session_factory() as session:
-        record = ScenarioRepository(session).get("current-plan")
+        record = ScenarioRepository(session, "default").get("current-plan")
         assert record is not None
         assert record.payload == build_baseline_scenario().model_dump(mode="json")
 

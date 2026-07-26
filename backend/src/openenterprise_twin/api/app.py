@@ -10,7 +10,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from openenterprise_twin import __version__
 from openenterprise_twin.api.decision_loop_routes import decision_loop_router
-from openenterprise_twin.api.dependencies import AppServices
+from openenterprise_twin.api.dependencies import AppInfrastructure
 from openenterprise_twin.api.errors import install_error_handlers
 from openenterprise_twin.api.middleware import (
     OperationalMetricsMiddleware,
@@ -23,12 +23,6 @@ from openenterprise_twin.api.observability import (
 )
 from openenterprise_twin.api.routes import public_router, router
 from openenterprise_twin.api.system import public_system_router, system_router
-from openenterprise_twin.application.decision_loop import (
-    CalibrationStudioService,
-    MonitoringService,
-    OptimizationLabService,
-)
-from openenterprise_twin.application.ledger import DecisionLedgerService
 from openenterprise_twin.infrastructure.artifacts import FileArtifactStore
 from openenterprise_twin.infrastructure.database import (
     create_database_engine,
@@ -36,14 +30,6 @@ from openenterprise_twin.infrastructure.database import (
 )
 from openenterprise_twin.infrastructure.identity import build_identity_provider
 from openenterprise_twin.infrastructure.models import Base
-from openenterprise_twin.infrastructure.repositories import (
-    SqlAlchemyDecisionEvidenceRepository,
-    SqlCalibrationRepository,
-    SqlDatasetRepository,
-    SqlDecisionLedgerRepository,
-    SqlMonitoringRepository,
-    SqlOptimizationRepository,
-)
 from openenterprise_twin.infrastructure.runner import BoundedExperimentRunner
 from openenterprise_twin.infrastructure.settings import Settings
 
@@ -113,31 +99,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ],
             expose_headers=["Location", "X-Trace-ID"],
         )
-    dataset_repository = SqlDatasetRepository(session_factory)
-    calibration_repository = SqlCalibrationRepository(session_factory)
-    app.state.services = AppServices(
+    app.state.services = AppInfrastructure(
         session_factory=session_factory,
         artifact_store=artifact_store,
-        decision_repository=SqlAlchemyDecisionEvidenceRepository(
-            session_factory
-        ),
         experiment_runner=runner,
-        calibration_studio=CalibrationStudioService(
-            datasets=dataset_repository,
-            calibrations=calibration_repository,
-            max_observations=resolved_settings.max_dataset_observations,
-        ),
-        optimization_lab=OptimizationLabService(
-            optimizations=SqlOptimizationRepository(session_factory),
-            max_evaluations=resolved_settings.max_optimization_evaluations,
-            max_periods=resolved_settings.max_optimization_periods,
-        ),
-        monitoring=MonitoringService(
-            reports=SqlMonitoringRepository(session_factory)
-        ),
-        decision_ledger=DecisionLedgerService(
-            SqlDecisionLedgerRepository(session_factory)
-        ),
         max_experiment_periods=resolved_settings.max_experiment_periods,
         max_adaptive_periods=resolved_settings.max_adaptive_periods,
     )

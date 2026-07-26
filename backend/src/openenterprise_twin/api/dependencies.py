@@ -30,6 +30,14 @@ from openenterprise_twin.application.ports import (
     ArtifactReader,
     DecisionEvidenceRepository,
 )
+from openenterprise_twin.infrastructure.repositories import (
+    SqlAlchemyDecisionEvidenceRepository,
+    SqlCalibrationRepository,
+    SqlDatasetRepository,
+    SqlDecisionLedgerRepository,
+    SqlMonitoringRepository,
+    SqlOptimizationRepository,
+)
 from openenterprise_twin.infrastructure.settings import Settings
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -37,7 +45,17 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 @dataclass(frozen=True, slots=True)
+class AppInfrastructure:
+    session_factory: sessionmaker[Session]
+    artifact_store: ArtifactReader
+    experiment_runner: ExperimentRunner
+    max_experiment_periods: int
+    max_adaptive_periods: int
+
+
+@dataclass(frozen=True, slots=True)
 class AppServices:
+    tenant_id: str
     session_factory: sessionmaker[Session]
     artifact_store: ArtifactReader
     decision_repository: DecisionEvidenceRepository
@@ -127,19 +145,81 @@ analyst_guard = require_any_role("analyst", "admin")
 admin_guard = require_any_role("admin")
 
 
-def get_services(request: Request) -> AppServices:
-    services = request.app.state.services
-    if not isinstance(services, AppServices):
-        raise RuntimeError("application services are not initialized")
-    return services
+def get_infrastructure(request: Request) -> AppInfrastructure:
+    infrastructure = request.app.state.services
+    if not isinstance(infrastructure, AppInfrastructure):
+        raise RuntimeError("application infrastructure is not initialized")
+    return infrastructure
+
+
+def get_services(
+    principal: PrincipalDependency,
+    infrastructure: Annotated[
+        AppInfrastructure,
+        Depends(get_infrastructure),
+    ],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AppServices:
+    dataset_repository = SqlDatasetRepository(
+        infrastructure.session_factory,
+        principal.tenant_id,
+    )
+    calibration_repository = SqlCalibrationRepository(
+        infrastructure.session_factory,
+        principal.tenant_id,
+    )
+    return AppServices(
+        tenant_id=principal.tenant_id,
+        session_factory=infrastructure.session_factory,
+        artifact_store=infrastructure.artifact_store,
+        decision_repository=SqlAlchemyDecisionEvidenceRepository(
+            infrastructure.session_factory,
+            principal.tenant_id,
+        ),
+        experiment_runner=infrastructure.experiment_runner,
+        calibration_studio=CalibrationStudioService(
+            datasets=dataset_repository,
+            calibrations=calibration_repository,
+            max_observations=settings.max_dataset_observations,
+        ),
+        optimization_lab=OptimizationLabService(
+            optimizations=SqlOptimizationRepository(
+                infrastructure.session_factory,
+                principal.tenant_id,
+            ),
+            max_evaluations=settings.max_optimization_evaluations,
+            max_periods=settings.max_optimization_periods,
+        ),
+        monitoring=MonitoringService(
+            reports=SqlMonitoringRepository(
+                infrastructure.session_factory,
+                principal.tenant_id,
+            )
+        ),
+        decision_ledger=DecisionLedgerService(
+            SqlDecisionLedgerRepository(
+                infrastructure.session_factory,
+                principal.tenant_id,
+            )
+        ),
+        max_experiment_periods=infrastructure.max_experiment_periods,
+        max_adaptive_periods=infrastructure.max_adaptive_periods,
+    )
 
 
 def get_session(
-    services: Annotated[AppServices, Depends(get_services)],
+    infrastructure: Annotated[
+        AppInfrastructure,
+        Depends(get_infrastructure),
+    ],
 ) -> Iterator[Session]:
-    with services.session_factory() as session:
+    with infrastructure.session_factory() as session:
         yield session
 
 
 SettingsDependency = Annotated[Settings, Depends(get_settings)]
 ServicesDependency = Annotated[AppServices, Depends(get_services)]
+InfrastructureDependency = Annotated[
+    AppInfrastructure,
+    Depends(get_infrastructure),
+]

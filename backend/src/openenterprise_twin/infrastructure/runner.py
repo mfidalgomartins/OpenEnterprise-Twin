@@ -4,6 +4,7 @@ import logging
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from threading import BoundedSemaphore, Lock
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from openenterprise_twin.application.experiments import ExperimentQueueFullError
@@ -52,44 +53,63 @@ class BoundedExperimentRunner:
         )
         self._slots = BoundedSemaphore(max_workers + queue_size)
         self._state_lock = Lock()
-        self._scheduled_ids: set[int] = set()
+        self._scheduled_ids: set[tuple[str, int]] = set()
         self._futures: set[Future[None]] = set()
         self._shutting_down = False
 
-    def submit(self, experiment_id: int) -> None:
+    def submit(self, experiment_id: int, tenant_id: str) -> None:
+        execution_key = (tenant_id, experiment_id)
         if not self._slots.acquire(blocking=False):
             raise ExperimentQueueFullError("experiment execution queue is full")
         with self._state_lock:
             if self._shutting_down:
                 self._slots.release()
                 raise RuntimeError("experiment runner is shutting down")
-            if experiment_id in self._scheduled_ids:
+            if execution_key in self._scheduled_ids:
                 self._slots.release()
                 return
-            self._scheduled_ids.add(experiment_id)
+            self._scheduled_ids.add(execution_key)
         try:
-            future = self._executor.submit(self._execute, experiment_id)
+            future = self._executor.submit(
+                self._execute,
+                experiment_id,
+                tenant_id,
+            )
         except Exception:
             with self._state_lock:
-                self._scheduled_ids.discard(experiment_id)
+                self._scheduled_ids.discard(execution_key)
             self._slots.release()
             raise
         with self._state_lock:
             self._futures.add(future)
 
         def release_slot(completed: Future[None]) -> None:
-            self._release_slot(completed, experiment_id)
+            self._release_slot(completed, execution_key)
 
         future.add_done_callback(release_slot)
 
     def recover_pending(self) -> None:
         with self._session_factory() as session, session.begin():
-            repository = ExperimentRepository(session)
-            repository.recover_interrupted()
-            pending_ids = repository.pending_ids()
-        for experiment_id in pending_ids:
+            tenant_ids = tuple(
+                session.scalars(
+                    select(ExperimentRecord.tenant_id)
+                    .where(
+                        ExperimentRecord.status.in_(("queued", "running"))
+                    )
+                    .distinct()
+                )
+            )
+            pending: list[tuple[str, int]] = []
+            for tenant_id in tenant_ids:
+                repository = ExperimentRepository(session, tenant_id)
+                repository.recover_interrupted()
+                pending.extend(
+                    (tenant_id, experiment_id)
+                    for experiment_id in repository.pending_ids()
+                )
+        for tenant_id, experiment_id in pending:
             try:
-                self.submit(experiment_id)
+                self.submit(experiment_id, tenant_id)
             except ExperimentQueueFullError:
                 break
 
@@ -107,11 +127,11 @@ class BoundedExperimentRunner:
     def _release_slot(
         self,
         future: Future[None],
-        experiment_id: int,
+        execution_key: tuple[str, int],
     ) -> None:
         with self._state_lock:
             self._futures.discard(future)
-            self._scheduled_ids.discard(experiment_id)
+            self._scheduled_ids.discard(execution_key)
             should_schedule = not self._shutting_down
         self._slots.release()
         if should_schedule:
@@ -119,23 +139,36 @@ class BoundedExperimentRunner:
 
     def _schedule_next_pending(self) -> None:
         with self._session_factory() as session:
-            pending_ids = ExperimentRepository(session).pending_ids()
+            pending = tuple(
+                (tenant_id, experiment_id)
+                for tenant_id, experiment_id in session.execute(
+                    select(
+                        ExperimentRecord.tenant_id,
+                        ExperimentRecord.id,
+                    )
+                    .where(ExperimentRecord.status == "queued")
+                    .order_by(
+                        ExperimentRecord.created_at,
+                        ExperimentRecord.id,
+                    )
+                )
+            )
         with self._state_lock:
             scheduled_ids = frozenset(self._scheduled_ids)
-        next_id = next(
-            (item for item in pending_ids if item not in scheduled_ids),
+        next_key = next(
+            (item for item in pending if item not in scheduled_ids),
             None,
         )
-        if next_id is None:
+        if next_key is None:
             return
         try:
-            self.submit(next_id)
+            self.submit(next_key[1], next_key[0])
         except (ExperimentQueueFullError, RuntimeError):
             return
 
-    def _execute(self, experiment_id: int) -> None:
+    def _execute(self, experiment_id: int, tenant_id: str) -> None:
         try:
-            job = self._start_job(experiment_id)
+            job = self._start_job(experiment_id, tenant_id)
             if job is None:
                 return
             scenario_payload, master_seed, replication_count, max_workers = job
@@ -156,22 +189,26 @@ class BoundedExperimentRunner:
             summary = result.model_dump(mode="json", exclude={"replications"})
             self._complete_job(
                 experiment_id,
+                tenant_id,
                 artifact_digest=digest,
                 result_payload=summary,
             )
         except Exception as error:
-            self._fail_job(experiment_id, error)
+            self._fail_job(experiment_id, tenant_id, error)
 
     def _start_job(
         self,
         experiment_id: int,
+        tenant_id: str,
     ) -> tuple[object, int, int, int] | None:
         with self._session_factory() as session, session.begin():
-            experiments = ExperimentRepository(session)
+            experiments = ExperimentRepository(session, tenant_id)
             record = experiments.claim_queued(experiment_id)
             if record is None:
                 return None
-            scenario_record = ScenarioRepository(session).get(record.scenario_id)
+            scenario_record = ScenarioRepository(session, tenant_id).get(
+                record.scenario_id
+            )
             if scenario_record is None:
                 raise LookupError(
                     f"scenario '{record.scenario_id}' is not present"
@@ -189,12 +226,13 @@ class BoundedExperimentRunner:
     def _complete_job(
         self,
         experiment_id: int,
+        tenant_id: str,
         *,
         artifact_digest: str,
         result_payload: dict[str, object],
     ) -> None:
         with self._session_factory() as session, session.begin():
-            repository = ExperimentRepository(session)
+            repository = ExperimentRepository(session, tenant_id)
             record = _required_experiment(repository, experiment_id)
             repository.mark_completed(
                 record,
@@ -202,14 +240,19 @@ class BoundedExperimentRunner:
                 result_payload=result_payload,
             )
 
-    def _fail_job(self, experiment_id: int, error: Exception) -> None:
+    def _fail_job(
+        self,
+        experiment_id: int,
+        tenant_id: str,
+        error: Exception,
+    ) -> None:
         logger.exception(
             "experiment execution failed",
             exc_info=error,
-            extra={"experiment_id": experiment_id},
+            extra={"experiment_id": experiment_id, "tenant_id": tenant_id},
         )
         with self._session_factory() as session, session.begin():
-            repository = ExperimentRepository(session)
+            repository = ExperimentRepository(session, tenant_id)
             record = repository.get(experiment_id)
             if record is None or record.status not in {"queued", "running"}:
                 return
