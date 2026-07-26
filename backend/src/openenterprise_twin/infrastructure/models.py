@@ -678,11 +678,27 @@ class OptimizationRecord(Base):
             "id",
             name="uq_optimizations_tenant_id_id",
         ),
+        UniqueConstraint(
+            "tenant_id",
+            "source_job_id",
+            name="uq_optimizations_tenant_source_job_id",
+        ),
+        ForeignKeyConstraint(
+            ("tenant_id", "source_job_id"),
+            ("jobs.tenant_id", "jobs.job_id"),
+            name="fk_optimizations_tenant_source_job",
+            ondelete="RESTRICT",
+        ),
         Index(
             "ix_optimizations_created_at",
             "tenant_id",
             "created_at",
             "id",
+        ),
+        Index(
+            "ix_optimizations_source_job_id",
+            "tenant_id",
+            "source_job_id",
         ),
     )
 
@@ -695,6 +711,10 @@ class OptimizationRecord(Base):
         _identity_type(),
         Identity(always=True),
         primary_key=True,
+    )
+    source_job_id: Mapped[str | None] = mapped_column(
+        String(36),
+        nullable=True,
     )
     company_model_version: Mapped[str] = mapped_column(Text, nullable=False)
     digest: Mapped[str] = mapped_column(String(64), nullable=False)

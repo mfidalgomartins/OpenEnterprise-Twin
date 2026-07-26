@@ -266,6 +266,10 @@ def test_every_business_table_has_tenant_ownership_and_same_tenant_links() -> No
             ("monitoring_reports", "tenant_id", "decision_id"),
             ("decisions.tenant_id", "decisions.decision_id"),
         ),
+        (
+            ("optimizations", "tenant_id", "source_job_id"),
+            ("jobs.tenant_id", "jobs.job_id"),
+        ),
     }
     actual_links = set()
     for table_name in expected_tables:

@@ -106,6 +106,14 @@ class HttpRequestMetric(ApiModel):
     duration_seconds_total: Annotated[float, Field(ge=0)]
 
 
+class JobQueueMetric(ApiModel):
+    queued: Annotated[int, Field(ge=0)]
+    running: Annotated[int, Field(ge=0)]
+    stale_leases: Annotated[int, Field(ge=0)]
+    oldest_queued_age_seconds: Annotated[float, Field(ge=0)] | None
+
+
 class OperationalMetricsSnapshot(ApiModel):
     uptime_seconds: Annotated[float, Field(ge=0)]
     http_requests: tuple[HttpRequestMetric, ...]
+    job_queue: JobQueueMetric

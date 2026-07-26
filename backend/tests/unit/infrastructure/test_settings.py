@@ -17,6 +17,24 @@ def test_settings_loads_optional_build_commit_from_environment(
     assert settings.build_commit == "a1b2c3d4"
 
 
+def test_job_runtime_defaults_to_external_with_safe_lease_ratio() -> None:
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.job_worker_mode == "external"
+    assert settings.job_workers > 0
+    assert settings.job_poll_interval_seconds > 0
+    assert settings.job_heartbeat_seconds < settings.job_lease_seconds
+
+
+def test_settings_rejects_heartbeat_not_shorter_than_lease() -> None:
+    with pytest.raises(ValidationError, match="job_heartbeat_seconds"):
+        Settings(
+            _env_file=None,  # type: ignore[call-arg]
+            job_lease_seconds=10,
+            job_heartbeat_seconds=10,
+        )
+
+
 @pytest.mark.parametrize(
     "invalid_build_commit",
     (

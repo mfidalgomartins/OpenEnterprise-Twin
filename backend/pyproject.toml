@@ -24,6 +24,9 @@ dependencies = [
     "uvicorn[standard]>=0.34,<1",
 ]
 
+[project.scripts]
+openenterprise-twin-worker = "openenterprise_twin.cli.worker:main"
+
 [project.optional-dependencies]
 dev = [
     "httpx2>=2.7,<3",

@@ -24,6 +24,7 @@ from openenterprise_twin.api.schemas import (
     ReadinessStatus,
     SystemInfo,
 )
+from openenterprise_twin.infrastructure.runner import job_queue_snapshot
 
 public_system_router = APIRouter()
 system_router = APIRouter(
@@ -35,6 +36,7 @@ _CAPABILITIES = (
     "adaptive_policies",
     "calibration",
     "decision_ledger",
+    "durable_jobs",
     "monitoring",
     "optimization",
     "paired_simulation",
@@ -70,11 +72,27 @@ def get_system_info(settings: SettingsDependency) -> SystemInfo:
     "/system/metrics",
     response_model=OperationalMetricsSnapshot,
 )
-def get_operational_metrics(request: Request) -> OperationalMetricsSnapshot:
+def get_operational_metrics(
+    request: Request,
+    infrastructure: InfrastructureDependency,
+) -> OperationalMetricsSnapshot:
     metrics = request.app.state.metrics
     if not isinstance(metrics, OperationalMetrics):
         raise RuntimeError("operational metrics are not initialized")
-    return OperationalMetricsSnapshot.model_validate(metrics.snapshot())
+    queue = job_queue_snapshot(infrastructure.session_factory)
+    return OperationalMetricsSnapshot.model_validate(
+        {
+            **metrics.snapshot(),
+            "job_queue": {
+                "queued": queue.queued,
+                "running": queue.running,
+                "stale_leases": queue.stale_leases,
+                "oldest_queued_age_seconds": (
+                    queue.oldest_queued_age_seconds
+                ),
+            },
+        }
+    )
 
 
 def _check_artifact_directory(artifact_directory: os.PathLike[str]) -> None:

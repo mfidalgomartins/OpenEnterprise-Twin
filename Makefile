@@ -25,6 +25,13 @@ OPENENTERPRISE_TWIN_ARTIFACT_DIRECTORY ?= artifacts
 OPENENTERPRISE_TWIN_EXPERIMENT_WORKERS ?= 2
 OPENENTERPRISE_TWIN_REPLICATION_WORKERS_PER_EXPERIMENT ?= 4
 OPENENTERPRISE_TWIN_EXPERIMENT_SHUTDOWN_TIMEOUT_SECONDS ?= 5
+OPENENTERPRISE_TWIN_JOB_WORKER_MODE ?= embedded
+OPENENTERPRISE_TWIN_JOB_WORKERS ?= 2
+OPENENTERPRISE_TWIN_JOB_POLL_INTERVAL_SECONDS ?= 0.25
+OPENENTERPRISE_TWIN_JOB_LEASE_SECONDS ?= 30
+OPENENTERPRISE_TWIN_JOB_HEARTBEAT_SECONDS ?= 10
+OPENENTERPRISE_TWIN_JOB_RETRY_DELAY_SECONDS ?= 2
+OPENENTERPRISE_TWIN_JOB_SHUTDOWN_TIMEOUT_SECONDS ?= 10
 OPENENTERPRISE_TWIN_CORS_ALLOWED_ORIGINS ?= ["http://$(DEV_HOST):$(FRONTEND_PORT)"]
 VITE_API_BASE_URL ?= http://$(DEV_HOST):$(API_PORT)
 
@@ -33,9 +40,16 @@ export OPENENTERPRISE_TWIN_ARTIFACT_DIRECTORY
 export OPENENTERPRISE_TWIN_EXPERIMENT_WORKERS
 export OPENENTERPRISE_TWIN_REPLICATION_WORKERS_PER_EXPERIMENT
 export OPENENTERPRISE_TWIN_EXPERIMENT_SHUTDOWN_TIMEOUT_SECONDS
+export OPENENTERPRISE_TWIN_JOB_WORKER_MODE
+export OPENENTERPRISE_TWIN_JOB_WORKERS
+export OPENENTERPRISE_TWIN_JOB_POLL_INTERVAL_SECONDS
+export OPENENTERPRISE_TWIN_JOB_LEASE_SECONDS
+export OPENENTERPRISE_TWIN_JOB_HEARTBEAT_SECONDS
+export OPENENTERPRISE_TWIN_JOB_RETRY_DELAY_SECONDS
+export OPENENTERPRISE_TWIN_JOB_SHUTDOWN_TIMEOUT_SECONDS
 export OPENENTERPRISE_TWIN_CORS_ALLOWED_ORIGINS
 
-.PHONY: help install backend-install frontend-install lock db migrate seed dev test lint demo demo-autopilot build docker-build e2e
+.PHONY: help install backend-install frontend-install lock db migrate seed dev worker test lint demo demo-autopilot build docker-build e2e
 
 help: ## Show the supported developer commands.
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "%-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -97,6 +111,10 @@ dev: install seed ## Start PostgreSQL, API and frontend with Northstar seeded.
 	while kill -0 $$api_pid 2>/dev/null && kill -0 $$frontend_pid 2>/dev/null; do sleep 1; done; \
 	echo "A development process exited; stopping the local stack." >&2; \
 	exit 1
+
+worker: backend-install migrate ## Run the standalone durable analytical worker.
+	cd backend && OPENENTERPRISE_TWIN_JOB_WORKER_MODE=external \
+		../$(PYTHON) -m openenterprise_twin.cli.worker
 
 test: install ## Run backend and frontend tests, excluding the long benchmark.
 	cd backend && ../$(PYTHON) -m pytest -m 'not performance' -q

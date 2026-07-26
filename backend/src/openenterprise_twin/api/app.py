@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import timedelta
 
 from fastapi import FastAPI
 from sqlalchemy.engine import make_url
@@ -30,7 +31,13 @@ from openenterprise_twin.infrastructure.database import (
 )
 from openenterprise_twin.infrastructure.identity import build_identity_provider
 from openenterprise_twin.infrastructure.models import Base
-from openenterprise_twin.infrastructure.runner import BoundedExperimentRunner
+from openenterprise_twin.infrastructure.runner import (
+    BoundedExperimentRunner,
+    DurableJobWorker,
+    EmbeddedJobWorkerPool,
+    build_analytical_job_handlers,
+    build_worker_id,
+)
 from openenterprise_twin.infrastructure.settings import Settings
 
 
@@ -51,14 +58,59 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             resolved_settings.replication_workers_per_experiment
         ),
     )
+    handlers = build_analytical_job_handlers(
+        session_factory=session_factory,
+        artifact_store=artifact_store,
+        max_replication_workers=(
+            resolved_settings.replication_workers_per_experiment
+        ),
+        max_dataset_observations=resolved_settings.max_dataset_observations,
+        max_optimization_evaluations=(
+            resolved_settings.max_optimization_evaluations
+        ),
+        max_optimization_periods=resolved_settings.max_optimization_periods,
+        max_adaptive_periods=resolved_settings.max_adaptive_periods,
+    )
+    worker_pool = (
+        EmbeddedJobWorkerPool(
+            workers=tuple(
+                DurableJobWorker(
+                    session_factory=session_factory,
+                    handlers=handlers,
+                    worker_id=build_worker_id("api-worker"),
+                    lease_duration=timedelta(
+                        seconds=resolved_settings.job_lease_seconds
+                    ),
+                    heartbeat_interval=timedelta(
+                        seconds=resolved_settings.job_heartbeat_seconds
+                    ),
+                    retry_delay=timedelta(
+                        seconds=resolved_settings.job_retry_delay_seconds
+                    ),
+                )
+                for _ in range(resolved_settings.job_workers)
+            ),
+            poll_interval=timedelta(
+                seconds=resolved_settings.job_poll_interval_seconds
+            ),
+        )
+        if resolved_settings.job_worker_mode == "embedded"
+        else None
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         del app
         try:
+            if worker_pool is not None:
+                worker_pool.start()
             runner.recover_pending()
             yield
         finally:
+            if worker_pool is not None:
+                worker_pool.shutdown(
+                    resolved_settings.job_shutdown_timeout_seconds
+                )
             runner.shutdown(
                 resolved_settings.experiment_shutdown_timeout_seconds
             )
@@ -107,6 +159,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         max_adaptive_periods=resolved_settings.max_adaptive_periods,
     )
     app.state.settings = resolved_settings
+    app.state.job_handlers = handlers
+    app.state.job_worker_pool = worker_pool
     app.state.identity_provider = build_identity_provider(resolved_settings)
     install_error_handlers(app)
     app.include_router(public_router)

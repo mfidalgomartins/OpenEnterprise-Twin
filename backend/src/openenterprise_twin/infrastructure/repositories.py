@@ -815,26 +815,55 @@ class SqlOptimizationRepository:
                 return None
             return self._to_stored(record)
 
+    def get_by_source_job_id(
+        self,
+        source_job_id: str,
+    ) -> StoredOptimization | None:
+        with self._session_factory() as session:
+            record = session.scalar(
+                select(OptimizationRecord).where(
+                    OptimizationRecord.tenant_id == self._tenant_id,
+                    OptimizationRecord.source_job_id == source_job_id,
+                )
+            )
+            if record is None:
+                return None
+            return self._to_stored(record)
+
     def save(
         self,
         *,
         company_model_version: str,
         config: OptimizationConfig,
         result: OptimizationResult,
+        source_job_id: str | None = None,
     ) -> StoredOptimization:
-        with self._session_factory() as session, session.begin():
-            record = OptimizationRecord(
-                tenant_id=self._tenant_id,
-                company_model_version=company_model_version,
-                digest=result.digest,
-                evaluations=result.evaluations,
-                config=config.model_dump(mode="json"),
-                result=result.model_dump(mode="json"),
-            )
-            session.add(record)
-            session.flush()
-            optimization_id = record.id
-            created_at = record.created_at
+        if source_job_id is not None:
+            existing = self.get_by_source_job_id(source_job_id)
+            if existing is not None:
+                return existing
+        try:
+            with self._session_factory() as session, session.begin():
+                record = OptimizationRecord(
+                    tenant_id=self._tenant_id,
+                    source_job_id=source_job_id,
+                    company_model_version=company_model_version,
+                    digest=result.digest,
+                    evaluations=result.evaluations,
+                    config=config.model_dump(mode="json"),
+                    result=result.model_dump(mode="json"),
+                )
+                session.add(record)
+                session.flush()
+                optimization_id = record.id
+                created_at = record.created_at
+        except IntegrityError:
+            if source_job_id is None:
+                raise
+            existing = self.get_by_source_job_id(source_job_id)
+            if existing is None:
+                raise
+            return existing
         return StoredOptimization(
             optimization_id=optimization_id,
             digest=result.digest,

@@ -13,6 +13,11 @@ PoolOverflow = Annotated[int, Field(ge=0, le=100)]
 PoolTimeout = Annotated[float, Field(gt=0, le=300)]
 PoolRecycle = Annotated[int, Field(gt=0, le=86_400)]
 WorkerCount = Annotated[int, Field(ge=1, le=32)]
+JobWorkerCount = Annotated[int, Field(ge=1, le=16)]
+JobPollInterval = Annotated[float, Field(gt=0, le=60)]
+JobLeaseSeconds = Annotated[float, Field(ge=1, le=3_600)]
+JobHeartbeatSeconds = Annotated[float, Field(gt=0, le=1_800)]
+JobRetryDelaySeconds = Annotated[float, Field(ge=0, le=86_400)]
 ReplicationWorkerCount = Annotated[int, Field(ge=1, le=16)]
 ShutdownTimeout = Annotated[float, Field(gt=0, le=300)]
 RequestBodyBytes = Annotated[int, Field(ge=1, le=100_000_000)]
@@ -58,6 +63,13 @@ class Settings(BaseSettings):
     experiment_workers: WorkerCount = 2
     replication_workers_per_experiment: ReplicationWorkerCount = 4
     experiment_shutdown_timeout_seconds: ShutdownTimeout = 5.0
+    job_worker_mode: Literal["embedded", "external"] = "external"
+    job_workers: JobWorkerCount = 2
+    job_poll_interval_seconds: JobPollInterval = 0.25
+    job_lease_seconds: JobLeaseSeconds = 30.0
+    job_heartbeat_seconds: JobHeartbeatSeconds = 10.0
+    job_retry_delay_seconds: JobRetryDelaySeconds = 2.0
+    job_shutdown_timeout_seconds: ShutdownTimeout = 10.0
     cors_allowed_origins: tuple[AnyHttpUrl, ...] = ()
     deployment_environment: Literal["development", "test", "production"] = (
         "development"
@@ -116,6 +128,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def require_safe_deployment_configuration(self) -> "Settings":
+        if self.job_heartbeat_seconds >= self.job_lease_seconds:
+            raise ValueError(
+                "job_heartbeat_seconds must be shorter than job_lease_seconds"
+            )
         if self.authentication_mode == "api_key":
             if self.api_key is None:
                 raise ValueError(

@@ -206,6 +206,7 @@ def test_system_info_is_protected_and_safe(
             "adaptive_policies",
             "calibration",
             "decision_ledger",
+            "durable_jobs",
             "monitoring",
             "optimization",
             "paired_simulation",
@@ -232,7 +233,7 @@ def test_metrics_are_protected_sorted_and_exclude_request_identifiers(
 
     assert response.status_code == 200
     payload = response.json()
-    assert set(payload) == {"uptime_seconds", "http_requests"}
+    assert set(payload) == {"uptime_seconds", "http_requests", "job_queue"}
     assert isinstance(payload["uptime_seconds"], float)
     assert payload["uptime_seconds"] >= 0
     assert payload["http_requests"] == sorted(
@@ -243,6 +244,12 @@ def test_metrics_are_protected_sorted_and_exclude_request_identifiers(
             item["status_family"],
         ),
     )
+    assert payload["job_queue"] == {
+        "queued": 0,
+        "running": 0,
+        "stale_leases": 0,
+        "oldest_queued_age_seconds": None,
+    }
     assert {
         "method": "GET",
         "route": "unmatched",

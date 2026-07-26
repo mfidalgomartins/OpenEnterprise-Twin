@@ -21,5 +21,46 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  migrate:
+    build:
+      context: ./backend
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      OPENENTERPRISE_TWIN_DATABASE_URL: postgresql+psycopg://openenterprise_twin:${POSTGRES_PASSWORD}@db:5432/openenterprise_twin
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
+  worker:
+    build:
+      context: ./backend
+    command: ["openenterprise-twin-worker"]
+    environment:
+      OPENENTERPRISE_TWIN_DATABASE_URL: postgresql+psycopg://openenterprise_twin:${POSTGRES_PASSWORD}@db:5432/openenterprise_twin
+      OPENENTERPRISE_TWIN_ARTIFACT_DIRECTORY: /app/artifacts
+      OPENENTERPRISE_TWIN_JOB_WORKER_MODE: external
+      OPENENTERPRISE_TWIN_JOB_WORKERS: ${OPENENTERPRISE_TWIN_JOB_WORKERS:-2}
+      OPENENTERPRISE_TWIN_JOB_POLL_INTERVAL_SECONDS: ${OPENENTERPRISE_TWIN_JOB_POLL_INTERVAL_SECONDS:-0.25}
+      OPENENTERPRISE_TWIN_JOB_LEASE_SECONDS: ${OPENENTERPRISE_TWIN_JOB_LEASE_SECONDS:-30}
+      OPENENTERPRISE_TWIN_JOB_HEARTBEAT_SECONDS: ${OPENENTERPRISE_TWIN_JOB_HEARTBEAT_SECONDS:-10}
+      OPENENTERPRISE_TWIN_JOB_RETRY_DELAY_SECONDS: ${OPENENTERPRISE_TWIN_JOB_RETRY_DELAY_SECONDS:-2}
+      OPENENTERPRISE_TWIN_JOB_SHUTDOWN_TIMEOUT_SECONDS: ${OPENENTERPRISE_TWIN_JOB_SHUTDOWN_TIMEOUT_SECONDS:-10}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - artifacts_data:/app/artifacts
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      disable: true
+
 volumes:
   postgres_data:
+  artifacts_data:
