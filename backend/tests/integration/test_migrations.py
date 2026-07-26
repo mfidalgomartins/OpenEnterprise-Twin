@@ -136,6 +136,12 @@ def test_populated_v05_schema_backfills_and_reverses_tenant_ownership(
                 text(f"SELECT tenant_id FROM {table_name} LIMIT 1")
             )
             assert tenant_id == "default"
+        assert "jobs" in inspect(isolated_database).get_table_names()
+        job_columns = {
+            column["name"]
+            for column in inspect(isolated_database).get_columns("jobs")
+        }
+        assert "tenant_id" in job_columns
 
     command.downgrade(config, "0003_decision_loop")
     columns = {

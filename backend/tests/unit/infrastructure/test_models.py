@@ -71,6 +71,7 @@ def test_metadata_uses_lowercase_identifiers_and_portable_json() -> None:
         "calibrations",
         "optimizations",
         "monitoring_reports",
+        "jobs",
     }
     assert all(
         identifier == identifier.lower()
@@ -157,6 +158,50 @@ def test_experiment_schema_has_required_constraints_and_indexes() -> None:
     )
 
 
+def test_job_schema_enforces_lifecycle_idempotency_and_queue_indexes() -> None:
+    from sqlalchemy import CheckConstraint, UniqueConstraint
+
+    from openenterprise_twin.infrastructure.models import JobRecord
+
+    table = JobRecord.__table__
+    checks = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in table.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+    unique_columns = {
+        tuple(column.name for column in constraint.columns)
+        for constraint in table.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+    indexes = {
+        index.name: tuple(column.name for column in index.columns)
+        for index in table.indexes
+    }
+
+    assert {
+        "ck_jobs_kind",
+        "ck_jobs_status",
+        "ck_jobs_attempts",
+        "ck_jobs_max_attempts",
+        "ck_jobs_progress",
+        "ck_jobs_lifecycle_consistency",
+    } <= checks.keys()
+    assert ("tenant_id", "kind", "idempotency_key") in unique_columns
+    assert indexes["ix_jobs_queue"] == (
+        "tenant_id",
+        "status",
+        "next_attempt_at",
+        "created_at",
+        "job_id",
+    )
+    assert indexes["ix_jobs_lease_expiry"] == (
+        "tenant_id",
+        "status",
+        "lease_expires_at",
+    )
+
+
 def test_every_business_table_has_tenant_ownership_and_same_tenant_links() -> None:
     from sqlalchemy import ForeignKeyConstraint
 
@@ -171,6 +216,7 @@ def test_every_business_table_has_tenant_ownership_and_same_tenant_links() -> No
         "calibrations",
         "optimizations",
         "monitoring_reports",
+        "jobs",
     }
     for table_name in expected_tables:
         table = Base.metadata.tables[table_name]

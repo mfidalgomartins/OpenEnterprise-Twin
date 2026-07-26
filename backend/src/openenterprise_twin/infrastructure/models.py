@@ -25,6 +25,13 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, synonym
 from sqlalchemy.types import TypeDecorator
 
 ExperimentStatus = Literal["queued", "running", "completed", "failed"]
+JobKind = Literal[
+    "experiment",
+    "calibration",
+    "optimization",
+    "adaptive_comparison",
+]
+JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 JsonObject = dict[str, Any]
 DEFAULT_TENANT_ID = "default"
 
@@ -266,6 +273,181 @@ class ExperimentRecord(Base):
         nullable=True,
     )
     completed_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.now(),
+    )
+
+
+class JobRecord(Base):
+    """Tenant-scoped analytical job with lease-based worker ownership."""
+
+    __tablename__ = "jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ("
+            "'experiment', 'calibration', 'optimization', "
+            "'adaptive_comparison'"
+            ")",
+            name="kind",
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
+            name="status",
+        ),
+        CheckConstraint(
+            "attempt_count >= 0 AND attempt_count <= max_attempts",
+            name="attempts",
+        ),
+        CheckConstraint(
+            "max_attempts >= 1 AND max_attempts <= 10",
+            name="max_attempts",
+        ),
+        CheckConstraint("progress >= 0 AND progress <= 100", name="progress"),
+        CheckConstraint(
+            "("
+            "status = 'queued' AND lease_owner IS NULL "
+            "AND lease_expires_at IS NULL AND heartbeat_at IS NULL "
+            "AND finished_at IS NULL AND result_resource_type IS NULL "
+            "AND result_resource_id IS NULL AND result_digest IS NULL "
+            "AND problem IS NULL"
+            ") OR ("
+            "status = 'running' AND started_at IS NOT NULL "
+            "AND lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL "
+            "AND heartbeat_at IS NOT NULL AND finished_at IS NULL "
+            "AND result_resource_type IS NULL AND result_resource_id IS NULL "
+            "AND result_digest IS NULL AND problem IS NULL"
+            ") OR ("
+            "status = 'succeeded' AND started_at IS NOT NULL "
+            "AND finished_at IS NOT NULL AND lease_owner IS NULL "
+            "AND lease_expires_at IS NULL AND heartbeat_at IS NULL "
+            "AND progress = 100 AND result_resource_type IS NOT NULL "
+            "AND result_resource_id IS NOT NULL AND result_digest IS NOT NULL "
+            "AND problem IS NULL"
+            ") OR ("
+            "status = 'failed' AND started_at IS NOT NULL "
+            "AND finished_at IS NOT NULL AND lease_owner IS NULL "
+            "AND lease_expires_at IS NULL AND heartbeat_at IS NULL "
+            "AND result_resource_type IS NULL AND result_resource_id IS NULL "
+            "AND result_digest IS NULL AND problem IS NOT NULL"
+            ") OR ("
+            "status = 'cancelled' AND finished_at IS NOT NULL "
+            "AND lease_owner IS NULL AND lease_expires_at IS NULL "
+            "AND heartbeat_at IS NULL AND result_resource_type IS NULL "
+            "AND result_resource_id IS NULL AND result_digest IS NULL "
+            "AND problem IS NULL"
+            ")",
+            name="lifecycle_consistency",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "job_id",
+            name="uq_jobs_tenant_id_job_id",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "kind",
+            "idempotency_key",
+            name="uq_jobs_tenant_kind_idempotency_key",
+        ),
+        Index(
+            "ix_jobs_queue",
+            "tenant_id",
+            "status",
+            "next_attempt_at",
+            "created_at",
+            "job_id",
+        ),
+        Index(
+            "ix_jobs_lease_expiry",
+            "tenant_id",
+            "status",
+            "lease_expires_at",
+        ),
+        Index(
+            "ix_jobs_created_at",
+            "tenant_id",
+            "created_at",
+            "job_id",
+        ),
+    )
+
+    job_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[JobKind] = mapped_column(Text, nullable=False)
+    status: Mapped[JobStatus] = mapped_column(
+        Text,
+        nullable=False,
+        default="queued",
+        server_default=text("'queued'"),
+    )
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_payload: Mapped[JsonObject] = mapped_column(_json_type(), nullable=False)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    attempt_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False)
+    progress: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    stage: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="queued",
+        server_default=text("'queued'"),
+    )
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    heartbeat_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    cancellation_requested_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    result_resource_type: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+    )
+    result_resource_id: Mapped[str | None] = mapped_column(
+        String(128),
+        nullable=True,
+    )
+    result_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    problem: Mapped[JsonObject | None] = mapped_column(_json_type(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+    started_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
         UTCDateTime(),
         nullable=True,
     )
