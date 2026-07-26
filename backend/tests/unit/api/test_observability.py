@@ -1,7 +1,11 @@
 """Unit contracts for bounded operational HTTP metrics."""
 
-from fastapi import APIRouter, FastAPI
+from typing import cast
 
+from fastapi import APIRouter, FastAPI
+from starlette.types import Scope
+
+from openenterprise_twin.api.middleware import _route_path
 from openenterprise_twin.api.observability import (
     OperationalMetrics,
     RegisteredRouteResolver,
@@ -183,4 +187,57 @@ def test_registered_route_resolver_returns_only_known_templates() -> None:
             path="/api/v1/unregistered/sensitive-id",
         )
         == "unmatched"
+    )
+
+
+def test_registered_route_resolver_handles_nested_prefix_and_method_mismatch() -> None:
+    resource_router = APIRouter(prefix="/resources")
+
+    @resource_router.get("/{resource_id}")
+    def get_resource(resource_id: str) -> dict[str, str]:
+        return {"resource_id": resource_id}
+
+    version_router = APIRouter(prefix="/v1")
+    version_router.include_router(resource_router)
+    api_router = APIRouter(prefix="/api")
+    api_router.include_router(version_router)
+    app = FastAPI(openapi_url=None)
+    app.include_router(api_router)
+
+    resolver = RegisteredRouteResolver.from_routes(app.routes)
+
+    assert resolver.resolve(
+        method="GET",
+        path="/api/v1/resources/sensitive-id",
+    ) == "/api/v1/resources/{resource_id}"
+    assert resolver.resolve(
+        method="DELETE",
+        path="/api/v1/resources/sensitive-id",
+    ) == "/api/v1/resources/{resource_id}"
+
+
+def test_route_path_strips_only_a_complete_root_path_prefix() -> None:
+    assert (
+        _route_path(
+            cast(
+                Scope,
+                {
+                    "path": "/gateway/api/v1/resources/sensitive-id",
+                    "root_path": "/gateway",
+                },
+            )
+        )
+        == "/api/v1/resources/sensitive-id"
+    )
+    assert (
+        _route_path(
+            cast(
+                Scope,
+                {
+                    "path": "/gateway-other/api/v1/resources/sensitive-id",
+                    "root_path": "/gateway",
+                },
+            )
+        )
+        == "/gateway-other/api/v1/resources/sensitive-id"
     )
