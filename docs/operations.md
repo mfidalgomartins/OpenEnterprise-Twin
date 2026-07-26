@@ -216,16 +216,11 @@ set -euo pipefail
 backup_dir="outputs/backups/<timestamp>"
 shasum -a 256 --check "${backup_dir}/SHA256SUMS"
 
-docker compose exec -T db pg_restore \
-  --username=openenterprise_twin \
-  --dbname=openenterprise_twin \
-  --clean \
-  --if-exists \
-  --no-owner \
-  --no-privileges \
-  < "${backup_dir}/postgres.dump"
-
 configured_artifact_dir="${OPENENTERPRISE_TWIN_ARTIFACT_DIRECTORY:?set an absolute artifact directory}"
+while test "${configured_artifact_dir}" != "/" &&
+  test "${configured_artifact_dir%/}" != "${configured_artifact_dir}"; do
+  configured_artifact_dir="${configured_artifact_dir%/}"
+done
 case "${configured_artifact_dir}" in
   /*) ;;
   *) echo "Artifact directory must be absolute" >&2; exit 1 ;;
@@ -250,6 +245,10 @@ test -d "${configured_parent}" && test ! -L "${configured_parent}" || {
 }
 artifact_parent="$(cd "${configured_parent}" && pwd -P)"
 artifact_dir="${artifact_parent}/${artifact_name}"
+test ! -L "${artifact_dir}" || {
+  echo "Refusing a symlinked canonical artifact directory" >&2
+  exit 1
+}
 test ! -e "${artifact_dir}" || test -d "${artifact_dir}" || {
   echo "Artifact target exists but is not a directory" >&2
   exit 1
@@ -290,6 +289,17 @@ test -d "${restored_artifacts}" || {
   rm -rf "${restore_stage}"
   exit 1
 }
+
+docker compose exec -T db pg_restore \
+  --username=openenterprise_twin \
+  --dbname=openenterprise_twin \
+  --clean \
+  --if-exists \
+  --single-transaction \
+  --exit-on-error \
+  --no-owner \
+  --no-privileges \
+  < "${backup_dir}/postgres.dump"
 
 previous_artifacts="${artifact_dir}.pre-restore.$(date -u +%Y%m%dT%H%M%SZ)"
 test ! -e "${previous_artifacts}" || {

@@ -14,7 +14,7 @@ keeps the evidence required to defend the decision.**
 
 [Run the flagship demo](#run-the-flagship-demo) ·
 [Inspect the architecture](docs/architecture.md) ·
-[Review security posture](docs/OpenEnterprise-Twin-threat-model.md) ·
+[Review the security posture](docs/OpenEnterprise-Twin-threat-model.md) ·
 [Explore the API](docs/architecture.md#api-surface) ·
 [See the enterprise roadmap](docs/superpowers/specs/2026-07-26-enterprise-grade-roadmap-design.md)
 
