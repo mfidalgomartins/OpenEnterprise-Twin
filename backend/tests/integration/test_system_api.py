@@ -20,6 +20,16 @@ from openenterprise_twin.api.dependencies import get_services
 from openenterprise_twin.api.errors import ApiProblemError
 from openenterprise_twin.infrastructure.settings import Settings
 
+_SECURITY_HEADERS = {
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+    "x-frame-options": "DENY",
+    "permissions-policy": (
+        "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+    ),
+    "cache-control": "no-store",
+}
+
 
 def _settings(
     tmp_path: Path,
@@ -203,6 +213,96 @@ def test_system_info_is_protected_and_safe(
     }
     assert "database_url" not in response.text
     assert "api_key" not in response.text
+
+
+def test_metrics_are_protected_sorted_and_exclude_request_identifiers(
+    production_client: TestClient,
+) -> None:
+    api_key = {"X-API-Key": "x" * 32}
+
+    assert production_client.get("/api/v1/system/metrics").status_code == 401
+    assert production_client.get("/unmatched-attacker-path").status_code == 404
+    assert production_client.get(
+        "/api/v1/scenarios/scenario-secret-123",
+        headers=api_key,
+    ).status_code == 404
+
+    response = production_client.get("/api/v1/system/metrics", headers=api_key)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {"uptime_seconds", "http_requests"}
+    assert isinstance(payload["uptime_seconds"], float)
+    assert payload["uptime_seconds"] >= 0
+    assert payload["http_requests"] == sorted(
+        payload["http_requests"],
+        key=lambda item: (
+            item["method"],
+            item["route"],
+            item["status_family"],
+        ),
+    )
+    assert {
+        "method": "GET",
+        "route": "unmatched",
+        "status_family": "4xx",
+        "count": 1,
+        "duration_seconds_total": pytest.approx(
+            next(
+                item["duration_seconds_total"]
+                for item in payload["http_requests"]
+                if item["route"] == "unmatched"
+            )
+        ),
+    } in payload["http_requests"]
+    assert {
+        "method": "GET",
+        "route": "/api/v1/scenarios/{scenario_id}",
+        "status_family": "4xx",
+        "count": 1,
+        "duration_seconds_total": pytest.approx(
+            next(
+                item["duration_seconds_total"]
+                for item in payload["http_requests"]
+                if item["route"] == "/api/v1/scenarios/{scenario_id}"
+            )
+        ),
+    } in payload["http_requests"]
+    assert "scenario-secret-123" not in response.text
+    assert "enterprise-operator" not in response.text
+    assert "trace_id" not in response.text
+
+
+def test_security_headers_cover_api_response_classes(tmp_path: Path) -> None:
+    api_key = "x" * 32
+    settings = _settings(tmp_path, api_key=SecretStr(api_key)).model_copy(
+        update={"max_request_body_bytes": 8}
+    )
+
+    with TestClient(create_app(settings)) as test_client:
+        responses = (
+            test_client.get("/api/v1/system/info", headers={"X-API-Key": api_key}),
+            test_client.get("/api/v1/system/info"),
+            test_client.get("/unmatched-attacker-path"),
+            test_client.post(
+                "/api/v1/scenarios",
+                content=b"x" * 9,
+                headers={"Content-Type": "application/json"},
+            ),
+            test_client.get("/ready"),
+        )
+
+    assert [response.status_code for response in responses] == [
+        200,
+        401,
+        404,
+        413,
+        200,
+    ]
+    for response in responses:
+        assert {
+            name: response.headers[name] for name in _SECURITY_HEADERS
+        } == _SECURITY_HEADERS
 
 
 def _assert_safe_not_ready(response: Response, settings: Settings) -> None:

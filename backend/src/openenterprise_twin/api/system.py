@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import NoReturn
 from uuid import uuid4
 
-from fastapi import APIRouter, Security
+from fastapi import APIRouter, Request, Security
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -16,7 +16,9 @@ from openenterprise_twin.api.dependencies import (
     require_principal,
 )
 from openenterprise_twin.api.errors import ApiProblemError
+from openenterprise_twin.api.observability import OperationalMetrics
 from openenterprise_twin.api.schemas import (
+    OperationalMetricsSnapshot,
     ReadinessChecks,
     ReadinessStatus,
     SystemInfo,
@@ -61,6 +63,17 @@ def get_system_info(settings: SettingsDependency) -> SystemInfo:
         build_commit=settings.build_commit,
         capabilities=_CAPABILITIES,
     )
+
+
+@system_router.get(
+    "/system/metrics",
+    response_model=OperationalMetricsSnapshot,
+)
+def get_operational_metrics(request: Request) -> OperationalMetricsSnapshot:
+    metrics = request.app.state.metrics
+    if not isinstance(metrics, OperationalMetrics):
+        raise RuntimeError("operational metrics are not initialized")
+    return OperationalMetricsSnapshot.model_validate(metrics.snapshot())
 
 
 def _check_artifact_directory(artifact_directory: os.PathLike[str]) -> None:

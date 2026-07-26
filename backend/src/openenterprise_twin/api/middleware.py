@@ -1,12 +1,103 @@
 """Small ASGI security controls that do not depend on a specific proxy."""
 
-from starlette.datastructures import Headers
+from time import monotonic
+
+from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from openenterprise_twin.api.observability import OperationalMetrics
+
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY",
+    "Permissions-Policy": (
+        "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+    ),
+    "Cache-Control": "no-store",
+}
+_KNOWN_HTTP_METHODS = frozenset(
+    {"DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"}
+)
 
 
 class RequestBodyTooLargeError(Exception):
     """Raised internally when a streaming request crosses the configured limit."""
+
+
+class OperationalMetricsMiddleware:
+    """Record completed HTTP requests using registered routes only."""
+
+    def __init__(self, app: ASGIApp, *, metrics: OperationalMetrics) -> None:
+        self.app = app
+        self.metrics = metrics
+
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        started_at = monotonic()
+        status_code: int | None = None
+
+        async def record_response(message: Message) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = int(message["status"])
+            await send(message)
+
+        try:
+            await self.app(scope, receive, record_response)
+        finally:
+            if status_code is not None:
+                self.metrics.record_http(
+                    method=_metric_method(scope["method"]),
+                    route=_metric_route(scope),
+                    status_code=status_code,
+                    duration_seconds=monotonic() - started_at,
+                )
+
+
+class SecurityHeadersMiddleware:
+    """Apply baseline API response headers to every HTTP response."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def apply_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(raw=message.setdefault("headers", []))
+                for name, value in _SECURITY_HEADERS.items():
+                    headers[name] = value
+            await send(message)
+
+        await self.app(scope, receive, apply_headers)
+
+
+def _metric_method(method: str) -> str:
+    return method if method in _KNOWN_HTTP_METHODS else "OTHER"
+
+
+def _metric_route(scope: Scope) -> str:
+    route = scope.get("route")
+    route_path = getattr(route, "path", None)
+    return route_path if isinstance(route_path, str) else "unmatched"
 
 
 class RequestBodyLimitMiddleware:

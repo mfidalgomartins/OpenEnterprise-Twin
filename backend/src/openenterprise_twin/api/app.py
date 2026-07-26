@@ -12,7 +12,12 @@ from openenterprise_twin import __version__
 from openenterprise_twin.api.decision_loop_routes import decision_loop_router
 from openenterprise_twin.api.dependencies import AppServices
 from openenterprise_twin.api.errors import install_error_handlers
-from openenterprise_twin.api.middleware import RequestBodyLimitMiddleware
+from openenterprise_twin.api.middleware import (
+    OperationalMetricsMiddleware,
+    RequestBodyLimitMiddleware,
+    SecurityHeadersMiddleware,
+)
+from openenterprise_twin.api.observability import OperationalMetrics
 from openenterprise_twin.api.routes import public_router, router
 from openenterprise_twin.api.system import public_system_router, system_router
 from openenterprise_twin.application.decision_loop import (
@@ -78,6 +83,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redoc_url="/redoc" if expose_docs else None,
         openapi_url="/openapi.json" if expose_docs else None,
     )
+    metrics = OperationalMetrics()
     app.add_middleware(
         RequestBodyLimitMiddleware,
         max_body_bytes=resolved_settings.max_request_body_bytes,
@@ -132,11 +138,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         max_adaptive_periods=resolved_settings.max_adaptive_periods,
     )
     app.state.settings = resolved_settings
+    app.state.metrics = metrics
     install_error_handlers(app)
     app.include_router(public_router)
     app.include_router(public_system_router)
     app.include_router(router)
     app.include_router(system_router)
     app.include_router(decision_loop_router)
+    app.add_middleware(OperationalMetricsMiddleware, metrics=metrics)
+    app.add_middleware(SecurityHeadersMiddleware)
 
     return app
