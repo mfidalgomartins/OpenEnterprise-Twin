@@ -86,6 +86,28 @@ def test_artifact_probe_fsync_failure_removes_probe_file(
     assert tuple(artifact_directory.iterdir()) == ()
 
 
+def test_artifact_probe_mismatched_read_returns_safe_problem(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api_key = "artifact-read-secret-" + "x" * 32
+    settings = _settings(tmp_path, api_key=SecretStr(api_key))
+    app = create_app(settings)
+    original_fsync = os.fsync
+
+    def corrupt_probe(file_descriptor: int) -> None:
+        os.lseek(file_descriptor, 0, os.SEEK_SET)
+        os.write(file_descriptor, b"0")
+        original_fsync(file_descriptor)
+
+    with TestClient(app) as test_client:
+        monkeypatch.setattr(os, "fsync", corrupt_probe)
+        response = test_client.get("/ready")
+
+    _assert_safe_not_ready(response, settings)
+    assert tuple(settings.artifact_directory.glob(".readiness-*.tmp")) == ()
+
+
 def test_artifact_probe_cleanup_oserror_maps_to_not_ready(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -184,11 +206,12 @@ def test_system_info_is_protected_and_safe(
 
 
 def _assert_safe_not_ready(response: Response, settings: Settings) -> None:
+    assert response.status_code == 503
+    assert response.headers["content-type"] == "application/problem+json"
+
     payload = response.json()
     trace_id = payload["trace_id"]
 
-    assert response.status_code == 503
-    assert response.headers["content-type"] == "application/problem+json"
     assert isinstance(trace_id, str)
     assert trace_id
     assert response.headers["x-trace-id"] == trace_id

@@ -64,15 +64,19 @@ def get_system_info(settings: SettingsDependency) -> SystemInfo:
 
 
 def _check_artifact_directory(artifact_directory: os.PathLike[str]) -> None:
+    probe_content = b"1"
     probe_path = Path(artifact_directory) / f".readiness-{uuid4().hex}.tmp"
     probe_created = False
     probe_failed = False
     try:
-        with probe_path.open("xb") as probe:
+        with probe_path.open("x+b") as probe:
             probe_created = True
-            probe.write(b"1")
+            probe.write(probe_content)
             probe.flush()
             os.fsync(probe.fileno())
+            probe.seek(0)
+            if probe.read() != probe_content:
+                probe_failed = True
     except OSError:
         probe_failed = True
     finally:
