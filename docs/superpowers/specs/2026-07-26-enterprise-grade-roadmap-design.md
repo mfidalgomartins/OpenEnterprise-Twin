@@ -276,4 +276,3 @@ Persisted payloads remain versioned. Readers upgrade known legacy shapes
 idempotently while preserving immutable timestamps and content digests.
 Breaking API changes require a new API version rather than silent contract
 changes.
-

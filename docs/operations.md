@@ -269,7 +269,7 @@ cd frontend
 npm audit --audit-level=high
 cd ..
 
-.venv/bin/python -m pip install "pip-audit==2.10.0"
+.venv/bin/python -m pip install "pip-audit==2.10.1"
 .venv/bin/python -m pip_audit \
   --require-hashes \
   --requirement backend/requirements.lock
