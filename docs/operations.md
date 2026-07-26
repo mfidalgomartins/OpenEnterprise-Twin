@@ -207,7 +207,8 @@ artifacts cannot reconstruct complete experiment evidence.
 ## Restore
 
 Restore into an isolated environment first. Keep the API stopped, verify the
-backup checksum, restore PostgreSQL, restore the matching artifacts, apply only
+backup checksum, validate and stage the artifact archive, restore PostgreSQL
+transactionally, rename the matching staged artifacts into place, apply only
 the migrations required by the selected application release, and then run
 readiness.
 
