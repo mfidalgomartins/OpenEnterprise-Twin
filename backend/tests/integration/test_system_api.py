@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from openenterprise_twin import __version__
 from openenterprise_twin.api import system as system_module
 from openenterprise_twin.api.app import create_app
-from openenterprise_twin.api.dependencies import get_services
+from openenterprise_twin.api.dependencies import get_infrastructure
 from openenterprise_twin.api.errors import ApiProblemError
 from openenterprise_twin.infrastructure.settings import Settings
 
@@ -52,6 +52,7 @@ def _settings(
         database_pool_size=2,
         database_max_overflow=0,
         deployment_environment=deployment_environment,
+        authentication_mode="api_key" if api_key is not None else "local",
         api_key=api_key,
         trusted_hosts=trusted_hosts,
         build_commit=build_commit,
@@ -170,7 +171,7 @@ def test_database_probe_failure_returns_safe_problem(tmp_path: Path) -> None:
         app.state.services,
         session_factory=cast(sessionmaker[Session], fail_session_factory),
     )
-    app.dependency_overrides[get_services] = lambda: services
+    app.dependency_overrides[get_infrastructure] = lambda: services
 
     with TestClient(app) as test_client:
         response = test_client.get("/ready")
@@ -205,10 +206,13 @@ def test_system_info_is_protected_and_safe(
             "adaptive_policies",
             "calibration",
             "decision_ledger",
+            "durable_jobs",
+            "identity_rbac",
             "monitoring",
             "optimization",
             "paired_simulation",
             "secure_csv",
+            "tenant_isolation",
         ],
     }
     assert "database_url" not in response.text
@@ -231,7 +235,7 @@ def test_metrics_are_protected_sorted_and_exclude_request_identifiers(
 
     assert response.status_code == 200
     payload = response.json()
-    assert set(payload) == {"uptime_seconds", "http_requests"}
+    assert set(payload) == {"uptime_seconds", "http_requests", "job_queue"}
     assert isinstance(payload["uptime_seconds"], float)
     assert payload["uptime_seconds"] >= 0
     assert payload["http_requests"] == sorted(
@@ -242,6 +246,12 @@ def test_metrics_are_protected_sorted_and_exclude_request_identifiers(
             item["status_family"],
         ),
     )
+    assert payload["job_queue"] == {
+        "queued": 0,
+        "running": 0,
+        "stale_leases": 0,
+        "oldest_queued_age_seconds": None,
+    }
     assert {
         "method": "GET",
         "route": "unmatched",

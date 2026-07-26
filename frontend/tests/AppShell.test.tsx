@@ -4,6 +4,7 @@ import { Router, useLocation } from "wouter";
 import { memoryLocation } from "wouter/memory-location";
 
 import { AppShell } from "../src/app/AppShell";
+import { AuthenticatedTestSession } from "./testAuth";
 
 const destinations = [
   "Briefing",
@@ -24,10 +25,12 @@ function renderShell(initialEntry = "/") {
 
   return render(
     <Router hook={location.hook}>
-      <AppShell>
-        <h1>Decision content</h1>
-        <CurrentLocation />
-      </AppShell>
+      <AuthenticatedTestSession>
+        <AppShell>
+          <h1>Decision content</h1>
+          <CurrentLocation />
+        </AppShell>
+      </AuthenticatedTestSession>
     </Router>,
   );
 }

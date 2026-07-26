@@ -107,12 +107,18 @@ class CalibrationRepository(Protocol):
 class OptimizationRepository(Protocol):
     def get(self, optimization_id: int) -> StoredOptimization | None: ...
 
+    def get_by_source_job_id(
+        self,
+        source_job_id: str,
+    ) -> StoredOptimization | None: ...
+
     def save(
         self,
         *,
         company_model_version: str,
         config: OptimizationConfig,
         result: OptimizationResult,
+        source_job_id: str | None = None,
     ) -> StoredOptimization: ...
 
     def list(
@@ -224,7 +230,12 @@ class OptimizationLabService:
         config: OptimizationConfig,
         replications: int,
         master_seed: int,
+        source_job_id: str | None = None,
     ) -> StoredOptimization:
+        if source_job_id is not None:
+            existing = self._optimizations.get_by_source_job_id(source_job_id)
+            if existing is not None:
+                return existing
         if config.max_evaluations > self._max_evaluations:
             raise DomainValidationError(
                 f"max_evaluations {config.max_evaluations} exceeds the deployment "
@@ -255,6 +266,7 @@ class OptimizationLabService:
             company_model_version=company.model_version,
             config=config,
             result=result,
+            source_job_id=source_job_id,
         )
 
 

@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { authenticate } from "./support/auth";
+
 function metric(
   metricName: "ebitda" | "free_cash_flow" | "closing_cash" | "otif",
   baseline: number,
@@ -172,7 +174,7 @@ test("publishes eight print-safe chapters from one immutable experiment", async 
     await route.fulfill({ json: report });
   });
 
-  await page.goto("/reports/42");
+  await authenticate(page, "/reports/42");
   await expect(
     page.getByRole("heading", { level: 1, name: "Executive decision brief" }),
   ).toBeVisible();

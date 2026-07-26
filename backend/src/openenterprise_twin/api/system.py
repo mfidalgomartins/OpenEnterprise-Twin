@@ -11,9 +11,10 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from openenterprise_twin import __version__
 from openenterprise_twin.api.dependencies import (
-    ServicesDependency,
+    AppInfrastructure,
+    InfrastructureDependency,
     SettingsDependency,
-    require_principal,
+    admin_guard,
 )
 from openenterprise_twin.api.errors import ApiProblemError
 from openenterprise_twin.api.observability import OperationalMetrics
@@ -23,31 +24,35 @@ from openenterprise_twin.api.schemas import (
     ReadinessStatus,
     SystemInfo,
 )
+from openenterprise_twin.infrastructure.runner import job_queue_snapshot
 
 public_system_router = APIRouter()
 system_router = APIRouter(
     prefix="/api/v1",
-    dependencies=[Security(require_principal)],
+    dependencies=[Security(admin_guard)],
 )
 
 _CAPABILITIES = (
     "adaptive_policies",
     "calibration",
     "decision_ledger",
+    "durable_jobs",
+    "identity_rbac",
     "monitoring",
     "optimization",
     "paired_simulation",
     "secure_csv",
+    "tenant_isolation",
 )
 
 
 @public_system_router.get("/ready", response_model=ReadinessStatus)
 def get_readiness(
-    services: ServicesDependency,
+    infrastructure: InfrastructureDependency,
     settings: SettingsDependency,
 ) -> ReadinessStatus:
     _check_artifact_directory(settings.artifact_directory)
-    _check_database(services)
+    _check_database(infrastructure)
     return ReadinessStatus(
         status="ready",
         checks=ReadinessChecks(artifacts="ready", database="ready"),
@@ -69,11 +74,27 @@ def get_system_info(settings: SettingsDependency) -> SystemInfo:
     "/system/metrics",
     response_model=OperationalMetricsSnapshot,
 )
-def get_operational_metrics(request: Request) -> OperationalMetricsSnapshot:
+def get_operational_metrics(
+    request: Request,
+    infrastructure: InfrastructureDependency,
+) -> OperationalMetricsSnapshot:
     metrics = request.app.state.metrics
     if not isinstance(metrics, OperationalMetrics):
         raise RuntimeError("operational metrics are not initialized")
-    return OperationalMetricsSnapshot.model_validate(metrics.snapshot())
+    queue = job_queue_snapshot(infrastructure.session_factory)
+    return OperationalMetricsSnapshot.model_validate(
+        {
+            **metrics.snapshot(),
+            "job_queue": {
+                "queued": queue.queued,
+                "running": queue.running,
+                "stale_leases": queue.stale_leases,
+                "oldest_queued_age_seconds": (
+                    queue.oldest_queued_age_seconds
+                ),
+            },
+        }
+    )
 
 
 def _check_artifact_directory(artifact_directory: os.PathLike[str]) -> None:
@@ -102,9 +123,9 @@ def _check_artifact_directory(artifact_directory: os.PathLike[str]) -> None:
         _raise_not_ready()
 
 
-def _check_database(services: ServicesDependency) -> None:
+def _check_database(infrastructure: AppInfrastructure) -> None:
     try:
-        with services.session_factory() as session:
+        with infrastructure.session_factory() as session:
             session.execute(text("SELECT 1"))
     except SQLAlchemyError:
         _raise_not_ready()

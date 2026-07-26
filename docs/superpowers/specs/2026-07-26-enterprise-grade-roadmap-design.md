@@ -91,7 +91,7 @@ the same services and pure analytics used by synchronous tests.
 
 ## Delivery programme
 
-### Phase 1 — Secure and governed baseline (`v0.5`)
+### Phase 1 — Secure and governed baseline (`v0.5`, delivered)
 
 - Consolidate valid dependency PRs and close unsafe or ineffective ones.
 - Remove all known high-severity locked dependency findings.
@@ -111,7 +111,7 @@ Acceptance evidence:
 - Main branch requires pull requests and the named CI/Security status checks.
 - A public patch/minor release is built from the merged, green commit.
 
-### Phase 2 — Identity, tenancy and durable jobs (`v0.6`)
+### Phase 2 — Identity, tenancy and durable jobs (`v0.6`, delivered)
 
 - Add OIDC JWT validation using issuer, audience, algorithm and JWKS allowlists.
 - Keep API-key auth only as an explicit service-account mode.

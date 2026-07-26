@@ -2,23 +2,34 @@ import { useEffect, useRef, useState, type PropsWithChildren } from "react";
 import { Link, useLocation } from "wouter";
 
 import { BrandMark } from "../components/BrandMark";
+import { useAuth, type Role } from "../features/auth/authContext";
 import { getCompanyReference } from "../features/scenarios/api";
 import type { CompanyReference } from "../features/scenarios/types";
 
-const destinations = [
+const destinations: ReadonlyArray<{
+  label: string;
+  to: string;
+  roles?: readonly Role[];
+}> = [
   { label: "Briefing", to: "/" },
   { label: "Twin", to: "/twin" },
-  { label: "Scenarios", to: "/scenarios" },
-  { label: "Calibration", to: "/calibration" },
-  { label: "Optimization", to: "/optimization" },
-  { label: "Adaptive", to: "/adaptive" },
-  { label: "Ledger", to: "/ledger" },
+  { label: "Scenarios", to: "/scenarios", roles: ["analyst", "admin"] },
+  { label: "Calibration", to: "/calibration", roles: ["analyst", "admin"] },
+  { label: "Optimization", to: "/optimization", roles: ["analyst", "admin"] },
+  { label: "Adaptive", to: "/adaptive", roles: ["analyst", "admin"] },
+  {
+    label: "Ledger",
+    to: "/ledger",
+    roles: ["analyst", "approver", "admin"],
+  },
   { label: "Monitoring", to: "/monitoring" },
+  { label: "Jobs", to: "/jobs" },
   { label: "Decisions", to: "/decisions" },
   { label: "Reports", to: "/reports" },
 ] as const;
 
 function ModelContext() {
+  const { mode, session, logout } = useAuth();
   const [company, setCompany] = useState<CompanyReference | null>(null);
 
   useEffect(() => {
@@ -57,12 +68,30 @@ function ModelContext() {
           <dt>Data mode</dt>
           <dd>Synthetic reference</dd>
         </div>
+        <div className="model-context__item">
+          <dt>Tenant</dt>
+          <dd>{session?.tenant_id ?? "—"}</dd>
+        </div>
+        <div className="model-context__item">
+          <dt>Role</dt>
+          <dd>{session?.roles.join(" · ") ?? "—"}</dd>
+        </div>
       </dl>
+      {mode === "oidc" ? (
+        <button
+          className="session-logout"
+          onClick={() => void logout()}
+          type="button"
+        >
+          Sign out
+        </button>
+      ) : null}
     </div>
   );
 }
 
 export function AppShell({ children }: PropsWithChildren) {
+  const { can } = useAuth();
   const [location] = useLocation();
   const mainRef = useRef<HTMLElement>(null);
   const pathname = location;
@@ -79,6 +108,7 @@ export function AppShell({ children }: PropsWithChildren) {
       "/adaptive": "Adaptive policy builder",
       "/ledger": "Decision ledger",
       "/monitoring": "Monitoring center",
+      "/jobs": "Analytical jobs",
     };
     const title =
       titleByPath[pathname] ??
@@ -101,7 +131,9 @@ export function AppShell({ children }: PropsWithChildren) {
           <BrandMark />
           <nav aria-label="Primary navigation" className="primary-nav">
             <ul className="primary-nav__list">
-              {destinations.map(({ label, to }) => {
+              {destinations
+                .filter(({ roles }) => !roles || can(...roles))
+                .map(({ label, to }) => {
                 const isActive =
                   to === "/"
                     ? pathname === "/"
@@ -118,7 +150,7 @@ export function AppShell({ children }: PropsWithChildren) {
                     </Link>
                   </li>
                 );
-              })}
+                })}
             </ul>
           </nav>
           <ModelContext />

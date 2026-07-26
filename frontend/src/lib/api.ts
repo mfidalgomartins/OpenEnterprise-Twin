@@ -34,6 +34,15 @@ export class ApiError extends Error {
 }
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+let accessToken: string | null = null;
+
+export function setApiAccessToken(token: string | null): void {
+  accessToken = token;
+}
+
+export function clearApiAccessToken(): void {
+  accessToken = null;
+}
 
 function requestHeaders(
   headersInit: HeadersInit | undefined,
@@ -47,6 +56,10 @@ function requestHeaders(
   if (hasBody) {
     headers["Content-Type"] =
       suppliedHeaders["content-type"] ?? "application/json";
+  }
+
+  if (accessToken && suppliedHeaders.authorization === undefined) {
+    headers.Authorization = `Bearer ${accessToken}`;
   }
 
   for (const [name, value] of Object.entries(suppliedHeaders)) {
@@ -75,10 +88,10 @@ export async function apiRequest<T>(
   options: ApiRequestOptions = {},
 ): Promise<T> {
   const { body, headers: headersInit, ...requestOptions } = options;
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+  const response = await apiFetch(path, {
     ...requestOptions,
     body: body === undefined ? undefined : JSON.stringify(body),
-    headers: requestHeaders(headersInit, body !== undefined),
+    headers: headersInit,
   });
   const contentType = response.headers.get("Content-Type") ?? "";
   const isJson = contentType.includes("json");
@@ -99,4 +112,20 @@ export async function apiRequest<T>(
   }
 
   return payload as T;
+}
+
+export function apiFetch(
+  path: string,
+  options: RequestInit = {},
+): Promise<Response> {
+  if (!path.startsWith("/") || path.startsWith("//")) {
+    throw new TypeError("API paths must be same-origin relative paths");
+  }
+  return fetch(`${apiBaseUrl}${path}`, {
+    ...options,
+    headers: requestHeaders(
+      options.headers,
+      options.body !== undefined && options.body !== null,
+    ),
+  });
 }

@@ -2,6 +2,9 @@ import { type ChangeEvent, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { ApiError } from "../../lib/api";
+import { useAuth } from "../auth/authContext";
+import { JobStatus } from "../jobs/JobStatus";
+import { useTrackedJob } from "../jobs/useJob";
 import {
   Badge,
   Meter,
@@ -62,15 +65,14 @@ interface LoadedDataset {
 }
 
 export function CalibrationStudioPage() {
+  const { can } = useAuth();
   const [dataset, setDataset] = useState<LoadedDataset | null>(null);
-  const [calibration, setCalibration] = useState<CalibrationResponse | null>(
-    null,
-  );
+  const execution = useTrackedJob<CalibrationResponse>();
+  const calibration = execution.resultQuery.data ?? null;
   const fileInput = useRef<HTMLInputElement>(null);
 
   const onLoaded = (loaded: LoadedDataset) => {
     setDataset(loaded);
-    setCalibration(null);
   };
 
   const ingest = useMutation({
@@ -103,7 +105,7 @@ export function CalibrationStudioPage() {
         dataset.backtestCutoff,
       );
     },
-    onSuccess: setCalibration,
+    onSuccess: execution.track,
   });
   const exportCsv = useMutation({
     mutationFn: () => downloadDatasetCsv(dataset?.datasetId ?? ""),
@@ -161,9 +163,13 @@ export function CalibrationStudioPage() {
               type="button"
               className="ap-button ap-button--primary"
               onClick={() => calibrate.mutate()}
-              disabled={!dataset || calibrate.isPending}
+              disabled={
+                !dataset || calibrate.isPending || execution.isActive
+              }
             >
-              {calibrate.isPending ? "Calibrating…" : "Calibrate & backtest"}
+              {calibrate.isPending || execution.isActive
+                ? "Calibrating…"
+                : "Calibrate & backtest"}
             </button>
           </div>
         }
@@ -180,6 +186,14 @@ export function CalibrationStudioPage() {
             kind="error"
             title="CSV import failed"
             detail={errorDetail(ingestCsv.error)}
+          />
+        ) : null}
+        {execution.currentJob ? (
+          <JobStatus
+            canCancel={can("analyst", "admin")}
+            isCancelling={execution.cancellation.isPending}
+            job={execution.currentJob}
+            onCancel={execution.cancel}
           />
         ) : null}
         {!dataset ? (
@@ -257,6 +271,17 @@ export function CalibrationStudioPage() {
             kind="error"
             title="Calibration failed"
             detail={errorDetail(calibrate.error)}
+          />
+        </Panel>
+      ) : null}
+      {execution.jobQuery.isError || execution.resultQuery.isError ? (
+        <Panel title="Credibility">
+          <StateBanner
+            kind="error"
+            title="Calibration result unavailable"
+            detail={errorDetail(
+              execution.jobQuery.error ?? execution.resultQuery.error,
+            )}
           />
         </Panel>
       ) : null}
@@ -349,9 +374,11 @@ export function CalibrationStudioPage() {
 // --- Optimization Lab --------------------------------------------------------
 
 export function OptimizationLabPage() {
+  const { can } = useAuth();
   const [seed, setSeed] = useState(731);
   const [requireNoRescue, setRequireNoRescue] = useState(true);
-  const [result, setResult] = useState<OptimizationResponse | null>(null);
+  const execution = useTrackedJob<OptimizationResponse>();
+  const result = execution.resultQuery.data ?? null;
 
   const optimize = useMutation({
     mutationFn: () =>
@@ -367,7 +394,7 @@ export function OptimizationLabPage() {
         horizonDays: 120,
         replications: 6,
       }),
-    onSuccess: setResult,
+    onSuccess: execution.track,
   });
 
   return (
@@ -399,14 +426,23 @@ export function OptimizationLabPage() {
               type="button"
               className="ap-button ap-button--primary"
               onClick={() => optimize.mutate()}
-              disabled={optimize.isPending}
+              disabled={optimize.isPending || execution.isActive}
             >
-              {optimize.isPending ? "Searching…" : "Run NSGA-II"}
+              {optimize.isPending || execution.isActive
+                ? "Searching…"
+                : "Run NSGA-II"}
             </button>
           </div>
         }
       >
-        {optimize.isPending ? (
+        {execution.currentJob ? (
+          <JobStatus
+            canCancel={can("analyst", "admin")}
+            isCancelling={execution.cancellation.isPending}
+            job={execution.currentJob}
+            onCancel={execution.cancel}
+          />
+        ) : optimize.isPending ? (
           <StateBanner
             kind="loading"
             title="Evaluating candidate policies"
@@ -420,7 +456,7 @@ export function OptimizationLabPage() {
             detail={errorDetail(optimize.error)}
           />
         ) : null}
-        {!result && !optimize.isPending ? (
+        {!result && !optimize.isPending && !execution.currentJob ? (
           <StateBanner
             kind="empty"
             title="No frontier yet"
@@ -521,12 +557,14 @@ const ADAPTIVE_RULE = {
 };
 
 export function AdaptivePolicyPage() {
+  const { can } = useAuth();
   const [threshold, setThreshold] = useState(8);
-  const [result, setResult] = useState<AdaptiveComparison | null>(null);
+  const execution = useTrackedJob<AdaptiveComparison>();
+  const result = execution.resultQuery.data ?? null;
 
   const compare = useMutation({
     mutationFn: () => compareAdaptivePolicy({ ...ADAPTIVE_RULE, threshold }),
-    onSuccess: setResult,
+    onSuccess: execution.track,
   });
 
   return (
@@ -551,9 +589,11 @@ export function AdaptivePolicyPage() {
               type="button"
               className="ap-button ap-button--primary"
               onClick={() => compare.mutate()}
-              disabled={compare.isPending}
+              disabled={compare.isPending || execution.isActive}
             >
-              {compare.isPending ? "Comparing…" : "Compare vs static"}
+              {compare.isPending || execution.isActive
+                ? "Comparing…"
+                : "Compare vs static"}
             </button>
           </div>
         }
@@ -566,7 +606,14 @@ export function AdaptivePolicyPage() {
           {ADAPTIVE_RULE.cooldownPeriods}, max {ADAPTIVE_RULE.maxActivations}{" "}
           activations)
         </p>
-        {compare.isPending ? (
+        {execution.currentJob ? (
+          <JobStatus
+            canCancel={can("analyst", "admin")}
+            isCancelling={execution.cancellation.isPending}
+            job={execution.currentJob}
+            onCancel={execution.cancel}
+          />
+        ) : compare.isPending ? (
           <StateBanner
             kind="loading"
             title="Running paired replications"
@@ -580,7 +627,7 @@ export function AdaptivePolicyPage() {
             detail={errorDetail(compare.error)}
           />
         ) : null}
-        {!result && !compare.isPending ? (
+        {!result && !compare.isPending && !execution.currentJob ? (
           <StateBanner
             kind="empty"
             title="No comparison yet"

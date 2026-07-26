@@ -135,21 +135,25 @@ function successfulExperimentFetch() {
       return Promise.resolve(
         jsonResponse(
           {
-            id: experimentPosts,
-            scenario_id:
-              experimentPosts === 1 ? "current-plan" : "candidate",
-            baseline_experiment_id: experimentPosts === 1 ? null : 1,
-            status: "completed",
-            seed: 731,
-            iterations: 100,
-            master_seed: 731,
-            replication_count: 100,
-            artifact_digest: "a".repeat(64),
-            error_code: null,
-            error_detail: null,
+            job_id: `experiment-job-${experimentPosts}`,
+            kind: "experiment",
+            status: "succeeded",
+            created_by: "test-admin",
+            attempt_count: 1,
+            max_attempts: 3,
+            progress: 100,
+            stage: "completed",
+            cancellation_requested_at: null,
+            next_attempt_at: null,
+            result_resource_type: "experiment",
+            result_resource_id: String(experimentPosts),
+            result_digest: "a".repeat(64),
+            result_location: `/api/v1/jobs/experiment-job-${experimentPosts}/result`,
+            problem: null,
             created_at: "2026-07-18T10:00:00Z",
             started_at: "2026-07-18T10:00:00Z",
-            completed_at: "2026-07-18T10:00:01Z",
+            finished_at: "2026-07-18T10:00:01Z",
+            updated_at: "2026-07-18T10:00:01Z",
           },
           202,
         ),
@@ -367,10 +371,81 @@ describe("ScenarioBuilder", () => {
     await user.click(screen.getByRole("button", { name: "Run comparison" }));
 
     expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
-    expect(screen.getByRole("status")).toHaveTextContent(
-      /Running candidate experiment/i,
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        /Running candidate experiment/i,
+      ),
     );
     expect(latest).toBeVisible();
+  });
+
+  it("surfaces durable worker progress for an active experiment", async () => {
+    const fallback = successfulExperimentFetch();
+    const queuedJob = {
+      job_id: "baseline-job-live",
+      kind: "experiment",
+      status: "queued",
+      created_by: "test-admin",
+      attempt_count: 0,
+      max_attempts: 3,
+      progress: 0,
+      stage: "queued",
+      cancellation_requested_at: null,
+      next_attempt_at: null,
+      result_resource_type: null,
+      result_resource_id: null,
+      result_digest: null,
+      result_location: null,
+      problem: null,
+      created_at: "2026-07-18T10:00:00Z",
+      started_at: null,
+      finished_at: null,
+      updated_at: "2026-07-18T10:00:00Z",
+    };
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      const path = String(input);
+      const method = init?.method ?? "GET";
+      if (
+        method === "POST" &&
+        path.endsWith("/scenarios/current-plan/experiments")
+      ) {
+        return Promise.resolve(jsonResponse(queuedJob, 202));
+      }
+      if (method === "GET" && path.endsWith("/api/v1/jobs/baseline-job-live")) {
+        return Promise.resolve(
+          jsonResponse({
+            ...queuedJob,
+            status: "running",
+            attempt_count: 1,
+            progress: 42,
+            stage: "simulating_replications",
+            started_at: "2026-07-18T10:00:01Z",
+            updated_at: "2026-07-18T10:00:02Z",
+          }),
+        );
+      }
+      return fallback(input, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderBuilder();
+
+    const price = await screen.findByLabelText(
+      "Spot intelligent valve price change",
+    );
+    await user.clear(price);
+    await user.type(price, "4");
+    await user.click(screen.getByRole("button", { name: "Run comparison" }));
+
+    expect(await screen.findByRole("progressbar")).toHaveAttribute(
+      "aria-valuenow",
+      "42",
+    );
+    expect(screen.getByText("Simulating replications")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Manage jobs" })).toHaveAttribute(
+      "href",
+      "/jobs",
+    );
   });
 
   it("preserves inputs and shows a stable API code with corrective action", async () => {

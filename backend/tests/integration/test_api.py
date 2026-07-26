@@ -11,9 +11,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr, ValidationError
 from starlette.requests import Request
 
-from openenterprise_twin.api import app as app_module
 from openenterprise_twin.api.app import create_app
-from openenterprise_twin.application.experiments import ExperimentQueueFullError
 from openenterprise_twin.domain.scenario import PolicyLevers
 from openenterprise_twin.infrastructure import runner as experiment_service
 from openenterprise_twin.infrastructure.database import (
@@ -35,6 +33,13 @@ def _settings(tmp_path: Path) -> Settings:
         database_url=f"sqlite+pysqlite:///{tmp_path / 'twin.db'}",
         artifact_directory=tmp_path / "artifacts",
         experiment_workers=1,
+        replication_workers_per_experiment=1,
+        job_worker_mode="embedded",
+        job_workers=1,
+        job_poll_interval_seconds=0.01,
+        job_lease_seconds=2,
+        job_heartbeat_seconds=0.25,
+        job_retry_delay_seconds=0,
         database_pool_size=2,
         database_max_overflow=0,
     )
@@ -51,8 +56,26 @@ def _wait_for_experiment(
         response = client.get(location)
         assert response.status_code == 200
         payload = response.json()
-        if payload["status"] in {"completed", "failed"}:
+        if "job_id" not in payload and payload["status"] in {
+            "completed",
+            "failed",
+        }:
             return payload
+        if payload["status"] == "succeeded":
+            experiment_id = payload["result_resource_id"]
+            result = client.get(f"/api/v1/experiments/{experiment_id}")
+            assert result.status_code == 200
+            return result.json()
+        if payload["status"] in {"failed", "cancelled"}:
+            problem = payload.get("problem") or {}
+            return {
+                "status": "failed",
+                "error_code": problem.get("code", "experiment_cancelled"),
+                "error_detail": problem.get(
+                    "detail",
+                    "Experiment execution was cancelled.",
+                ),
+            }
         sleep(0.01)
     raise AssertionError("experiment did not reach a terminal state")
 
@@ -224,8 +247,8 @@ def test_canonical_experiment_contract_accepts_iterations_and_seed(
         )
 
     assert response.status_code == 202
-    assert response.json()["iterations"] == 1
-    assert response.json()["seed"] == 731
+    assert response.json()["kind"] == "experiment"
+    assert response.json()["status"] in {"queued", "running", "succeeded"}
 
 
 def test_scenario_creation_rejects_unknown_company_model(tmp_path: Path) -> None:
@@ -284,7 +307,7 @@ def test_experiment_creation_is_idempotent(tmp_path: Path) -> None:
 
         assert first.status_code == 202
         assert second.status_code == 202
-        assert first.json()["id"] == second.json()["id"]
+        assert first.json()["job_id"] == second.json()["job_id"]
 
         conflict = client.post(
             f"/api/v1/scenarios/{scenario.scenario_id}/experiments",
@@ -295,27 +318,14 @@ def test_experiment_creation_is_idempotent(tmp_path: Path) -> None:
         assert conflict.json()["code"] == "idempotency_conflict"
 
 
-def test_queue_saturation_does_not_poison_idempotent_retry(
+def test_durable_queue_persists_idempotent_work_without_embedded_worker(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class AlwaysFullRunner:
-        def __init__(self, **_: object) -> None:
-            pass
-
-        def submit(self, experiment_id: int) -> None:
-            del experiment_id
-            raise ExperimentQueueFullError("experiment execution queue is full")
-
-        def recover_pending(self) -> None:
-            pass
-
-        def shutdown(self, timeout_seconds: float) -> None:
-            del timeout_seconds
-            pass
-
-    monkeypatch.setattr(app_module, "BoundedExperimentRunner", AlwaysFullRunner)
-    app = create_app(_settings(tmp_path))
+    app = create_app(
+        _settings(tmp_path).model_copy(
+            update={"job_worker_mode": "external"}
+        )
+    )
     scenario = build_baseline_scenario(horizon_days=2)
 
     with TestClient(app) as client:
@@ -332,11 +342,9 @@ def test_queue_saturation_does_not_poison_idempotent_retry(
             for _ in range(2)
         ]
 
-    assert [response.status_code for response in responses] == [429, 429]
-    assert all(
-        response.json()["code"] == "experiment_queue_full"
-        for response in responses
-    )
+    assert [response.status_code for response in responses] == [202, 202]
+    assert responses[0].json()["job_id"] == responses[1].json()["job_id"]
+    assert responses[0].json()["status"] == "queued"
 
 
 def test_startup_recovers_persisted_running_experiment(tmp_path: Path) -> None:
@@ -469,8 +477,10 @@ def test_execution_failure_reaches_a_stable_terminal_state(
         result = _wait_for_experiment(client, response.headers["location"])
 
     assert result["status"] == "failed"
-    assert result["error_code"] == "experiment_execution"
-    assert result["error_detail"] == "Experiment execution failed."
+    assert result["error_code"] == "experiment_execution_failed"
+    assert result["error_detail"] == (
+        "Experiment execution could not be completed."
+    )
 
 
 def test_api_returns_problem_details_for_missing_and_invalid_resources(
@@ -523,6 +533,7 @@ def test_cors_allows_only_explicitly_configured_development_origin(
     assert allowed.headers["access-control-allow-origin"] == (
         "http://127.0.0.1:5173"
     )
+    assert "authorization" in allowed.headers["access-control-allow-headers"].lower()
     assert "access-control-allow-origin" not in denied.headers
 
 
@@ -536,6 +547,7 @@ def test_production_requires_a_strong_api_key(
             database_url=f"sqlite+pysqlite:///{tmp_path / 'twin.db'}",
             artifact_directory=tmp_path / "artifacts",
             deployment_environment="production",
+            authentication_mode="api_key",
             api_key=api_key,
         )
 
@@ -546,6 +558,7 @@ def test_production_requires_explicit_trusted_hosts(tmp_path: Path) -> None:
             database_url=f"sqlite+pysqlite:///{tmp_path / 'twin.db'}",
             artifact_directory=tmp_path / "artifacts",
             deployment_environment="production",
+            authentication_mode="api_key",
             api_key=SecretStr("test-enterprise-key-with-32-characters"),
         )
 
@@ -560,6 +573,7 @@ def test_production_rejects_unsafe_trusted_hosts(
             database_url=f"sqlite+pysqlite:///{tmp_path / 'twin.db'}",
             artifact_directory=tmp_path / "artifacts",
             deployment_environment="production",
+            authentication_mode="api_key",
             api_key=SecretStr("test-enterprise-key-with-32-characters"),
             trusted_hosts=trusted_hosts,
         )
@@ -601,7 +615,10 @@ def test_mutation_audit_log_escapes_control_characters(
 
 def test_api_key_protects_resources_but_not_health(tmp_path: Path) -> None:
     settings = _settings(tmp_path).model_copy(
-        update={"api_key": SecretStr("test-enterprise-key")}
+        update={
+            "authentication_mode": "api_key",
+            "api_key": SecretStr("test-enterprise-key"),
+        }
     )
     app = create_app(settings)
 
@@ -626,6 +643,7 @@ def test_production_disables_api_documentation_and_rejects_unknown_hosts(
         database_url=f"sqlite+pysqlite:///{tmp_path / 'twin.db'}",
         artifact_directory=tmp_path / "artifacts",
         deployment_environment="production",
+        authentication_mode="api_key",
         api_key=SecretStr("test-enterprise-key-with-32-characters"),
         trusted_hosts=("enterprise.example", "testserver"),
     )

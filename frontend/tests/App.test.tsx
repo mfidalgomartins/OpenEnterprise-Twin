@@ -10,7 +10,14 @@ describe("App", () => {
       "fetch",
       vi.fn<typeof fetch>((input) => {
         const path = String(input);
-        const payload = path.endsWith("/api/v1/company")
+        const payload = path.endsWith("/api/v1/session")
+          ? {
+              subject: "test-admin",
+              tenant_id: "northstar",
+              roles: ["admin"],
+              authentication_method: "local",
+            }
+          : path.endsWith("/api/v1/company")
           ? {
               company_id: "northstar-components",
               name: "Northstar Components",

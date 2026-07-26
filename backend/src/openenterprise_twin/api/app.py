@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import timedelta
 
 from fastapi import FastAPI
 from sqlalchemy.engine import make_url
@@ -10,8 +11,9 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from openenterprise_twin import __version__
 from openenterprise_twin.api.decision_loop_routes import decision_loop_router
-from openenterprise_twin.api.dependencies import AppServices
+from openenterprise_twin.api.dependencies import AppInfrastructure
 from openenterprise_twin.api.errors import install_error_handlers
+from openenterprise_twin.api.jobs import jobs_router
 from openenterprise_twin.api.middleware import (
     OperationalMetricsMiddleware,
     RequestBodyLimitMiddleware,
@@ -23,27 +25,20 @@ from openenterprise_twin.api.observability import (
 )
 from openenterprise_twin.api.routes import public_router, router
 from openenterprise_twin.api.system import public_system_router, system_router
-from openenterprise_twin.application.decision_loop import (
-    CalibrationStudioService,
-    MonitoringService,
-    OptimizationLabService,
-)
-from openenterprise_twin.application.ledger import DecisionLedgerService
 from openenterprise_twin.infrastructure.artifacts import FileArtifactStore
 from openenterprise_twin.infrastructure.database import (
     create_database_engine,
     create_session_factory,
 )
+from openenterprise_twin.infrastructure.identity import build_identity_provider
 from openenterprise_twin.infrastructure.models import Base
-from openenterprise_twin.infrastructure.repositories import (
-    SqlAlchemyDecisionEvidenceRepository,
-    SqlCalibrationRepository,
-    SqlDatasetRepository,
-    SqlDecisionLedgerRepository,
-    SqlMonitoringRepository,
-    SqlOptimizationRepository,
+from openenterprise_twin.infrastructure.runner import (
+    DurableJobWorker,
+    EmbeddedJobWorkerPool,
+    backfill_active_experiment_jobs,
+    build_analytical_job_handlers,
+    build_worker_id,
 )
-from openenterprise_twin.infrastructure.runner import BoundedExperimentRunner
 from openenterprise_twin.infrastructure.settings import Settings
 
 
@@ -56,25 +51,59 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         Base.metadata.create_all(engine)
     session_factory = create_session_factory(engine)
     artifact_store = FileArtifactStore(resolved_settings.artifact_directory)
-    runner = BoundedExperimentRunner(
+    handlers = build_analytical_job_handlers(
         session_factory=session_factory,
         artifact_store=artifact_store,
-        max_workers=resolved_settings.experiment_workers,
         max_replication_workers=(
             resolved_settings.replication_workers_per_experiment
         ),
+        max_dataset_observations=resolved_settings.max_dataset_observations,
+        max_optimization_evaluations=(
+            resolved_settings.max_optimization_evaluations
+        ),
+        max_optimization_periods=resolved_settings.max_optimization_periods,
+        max_adaptive_periods=resolved_settings.max_adaptive_periods,
+    )
+    worker_pool = (
+        EmbeddedJobWorkerPool(
+            workers=tuple(
+                DurableJobWorker(
+                    session_factory=session_factory,
+                    handlers=handlers,
+                    worker_id=build_worker_id("api-worker"),
+                    lease_duration=timedelta(
+                        seconds=resolved_settings.job_lease_seconds
+                    ),
+                    heartbeat_interval=timedelta(
+                        seconds=resolved_settings.job_heartbeat_seconds
+                    ),
+                    retry_delay=timedelta(
+                        seconds=resolved_settings.job_retry_delay_seconds
+                    ),
+                )
+                for _ in range(resolved_settings.job_workers)
+            ),
+            poll_interval=timedelta(
+                seconds=resolved_settings.job_poll_interval_seconds
+            ),
+        )
+        if resolved_settings.job_worker_mode == "embedded"
+        else None
     )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         del app
         try:
-            runner.recover_pending()
+            backfill_active_experiment_jobs(session_factory)
+            if worker_pool is not None:
+                worker_pool.start()
             yield
         finally:
-            runner.shutdown(
-                resolved_settings.experiment_shutdown_timeout_seconds
-            )
+            if worker_pool is not None:
+                worker_pool.shutdown(
+                    resolved_settings.job_shutdown_timeout_seconds
+                )
             engine.dispose()
 
     expose_docs = resolved_settings.deployment_environment != "production"
@@ -105,46 +134,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_methods=["GET", "POST", "OPTIONS"],
             allow_headers=[
                 "Accept",
+                "Authorization",
                 "Content-Type",
                 "Idempotency-Key",
                 "X-API-Key",
             ],
             expose_headers=["Location", "X-Trace-ID"],
         )
-    dataset_repository = SqlDatasetRepository(session_factory)
-    calibration_repository = SqlCalibrationRepository(session_factory)
-    app.state.services = AppServices(
+    app.state.services = AppInfrastructure(
         session_factory=session_factory,
         artifact_store=artifact_store,
-        decision_repository=SqlAlchemyDecisionEvidenceRepository(
-            session_factory
-        ),
-        experiment_runner=runner,
-        calibration_studio=CalibrationStudioService(
-            datasets=dataset_repository,
-            calibrations=calibration_repository,
-            max_observations=resolved_settings.max_dataset_observations,
-        ),
-        optimization_lab=OptimizationLabService(
-            optimizations=SqlOptimizationRepository(session_factory),
-            max_evaluations=resolved_settings.max_optimization_evaluations,
-            max_periods=resolved_settings.max_optimization_periods,
-        ),
-        monitoring=MonitoringService(
-            reports=SqlMonitoringRepository(session_factory)
-        ),
-        decision_ledger=DecisionLedgerService(
-            SqlDecisionLedgerRepository(session_factory)
-        ),
         max_experiment_periods=resolved_settings.max_experiment_periods,
         max_adaptive_periods=resolved_settings.max_adaptive_periods,
     )
     app.state.settings = resolved_settings
+    app.state.job_handlers = handlers
+    app.state.job_worker_pool = worker_pool
+    app.state.identity_provider = build_identity_provider(resolved_settings)
     install_error_handlers(app)
     app.include_router(public_router)
     app.include_router(public_system_router)
     app.include_router(router)
     app.include_router(system_router)
+    app.include_router(jobs_router)
     app.include_router(decision_loop_router)
     route_resolver = RegisteredRouteResolver.from_routes(app.routes)
     metrics = OperationalMetrics(

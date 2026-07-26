@@ -1,9 +1,9 @@
 import { apiRequest } from "../../lib/api";
+import type { Job } from "../jobs/types";
 import type {
   CompanyReference,
   DecisionPortfolio,
   ExecutiveBrief,
-  ExperimentResource,
   ScenarioComparison,
   ScenarioPayload,
   ScenarioResource,
@@ -58,7 +58,7 @@ export function createExperiment(
   request: { iterations: number; max_workers: number; seed: number },
   idempotencyKey: string,
 ) {
-  return apiRequest<ExperimentResource>(
+  return apiRequest<Job>(
     `/api/v1/scenarios/${encodeURIComponent(scenarioId)}/experiments`,
     {
       body: request,
@@ -66,8 +66,4 @@ export function createExperiment(
       method: "POST",
     },
   );
-}
-
-export function getExperiment(experimentId: number) {
-  return apiRequest<ExperimentResource>(`/api/v1/experiments/${experimentId}`);
 }

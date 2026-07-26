@@ -16,6 +16,7 @@ DEV_HOST ?= 127.0.0.1
 API_PORT ?= 8000
 FRONTEND_PORT ?= 5173
 E2E_API_PORT ?= 18000
+E2E_OIDC_PORT ?= 18081
 DEMO_SEED ?= 731
 DEMO_REPLICATIONS ?= 100
 DEMO_TIMEOUT_SECONDS ?= 600
@@ -25,6 +26,13 @@ OPENENTERPRISE_TWIN_ARTIFACT_DIRECTORY ?= artifacts
 OPENENTERPRISE_TWIN_EXPERIMENT_WORKERS ?= 2
 OPENENTERPRISE_TWIN_REPLICATION_WORKERS_PER_EXPERIMENT ?= 4
 OPENENTERPRISE_TWIN_EXPERIMENT_SHUTDOWN_TIMEOUT_SECONDS ?= 5
+OPENENTERPRISE_TWIN_JOB_WORKER_MODE ?= external
+OPENENTERPRISE_TWIN_JOB_WORKERS ?= 2
+OPENENTERPRISE_TWIN_JOB_POLL_INTERVAL_SECONDS ?= 0.25
+OPENENTERPRISE_TWIN_JOB_LEASE_SECONDS ?= 30
+OPENENTERPRISE_TWIN_JOB_HEARTBEAT_SECONDS ?= 10
+OPENENTERPRISE_TWIN_JOB_RETRY_DELAY_SECONDS ?= 2
+OPENENTERPRISE_TWIN_JOB_SHUTDOWN_TIMEOUT_SECONDS ?= 10
 OPENENTERPRISE_TWIN_CORS_ALLOWED_ORIGINS ?= ["http://$(DEV_HOST):$(FRONTEND_PORT)"]
 VITE_API_BASE_URL ?= http://$(DEV_HOST):$(API_PORT)
 
@@ -33,9 +41,16 @@ export OPENENTERPRISE_TWIN_ARTIFACT_DIRECTORY
 export OPENENTERPRISE_TWIN_EXPERIMENT_WORKERS
 export OPENENTERPRISE_TWIN_REPLICATION_WORKERS_PER_EXPERIMENT
 export OPENENTERPRISE_TWIN_EXPERIMENT_SHUTDOWN_TIMEOUT_SECONDS
+export OPENENTERPRISE_TWIN_JOB_WORKER_MODE
+export OPENENTERPRISE_TWIN_JOB_WORKERS
+export OPENENTERPRISE_TWIN_JOB_POLL_INTERVAL_SECONDS
+export OPENENTERPRISE_TWIN_JOB_LEASE_SECONDS
+export OPENENTERPRISE_TWIN_JOB_HEARTBEAT_SECONDS
+export OPENENTERPRISE_TWIN_JOB_RETRY_DELAY_SECONDS
+export OPENENTERPRISE_TWIN_JOB_SHUTDOWN_TIMEOUT_SECONDS
 export OPENENTERPRISE_TWIN_CORS_ALLOWED_ORIGINS
 
-.PHONY: help install backend-install frontend-install lock db migrate seed dev test lint demo demo-autopilot build docker-build e2e
+.PHONY: help install backend-install frontend-install lock db migrate seed dev worker test lint demo demo-autopilot build docker-build e2e
 
 help: ## Show the supported developer commands.
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "%-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -85,7 +100,8 @@ seed: migrate ## Migrate and seed the versioned Northstar baseline scenario.
 
 dev: install seed ## Start PostgreSQL, API and frontend with Northstar seeded.
 	@set -euo pipefail; \
-	(cd backend && exec ../$(PYTHON) -m uvicorn openenterprise_twin.api.app:create_app \
+	(cd backend && OPENENTERPRISE_TWIN_JOB_WORKER_MODE=embedded \
+		exec ../$(PYTHON) -m uvicorn openenterprise_twin.api.app:create_app \
 		--factory --reload --host $(DEV_HOST) --port $(API_PORT)) & api_pid=$$!; \
 	(cd frontend && exec env VITE_API_BASE_URL='$(VITE_API_BASE_URL)' \
 		npm run dev -- --host $(DEV_HOST) --port $(FRONTEND_PORT)) & frontend_pid=$$!; \
@@ -97,6 +113,10 @@ dev: install seed ## Start PostgreSQL, API and frontend with Northstar seeded.
 	while kill -0 $$api_pid 2>/dev/null && kill -0 $$frontend_pid 2>/dev/null; do sleep 1; done; \
 	echo "A development process exited; stopping the local stack." >&2; \
 	exit 1
+
+worker: backend-install migrate ## Run the standalone durable analytical worker.
+	cd backend && OPENENTERPRISE_TWIN_JOB_WORKER_MODE=external \
+		../$(PYTHON) -m openenterprise_twin.cli.worker
 
 test: install ## Run backend and frontend tests, excluding the long benchmark.
 	cd backend && ../$(PYTHON) -m pytest -m 'not performance' -q
@@ -134,20 +154,42 @@ docker-build: ## Build the production backend and frontend container images.
 e2e: install ## Run Playwright, including an isolated full-stack browser flow.
 	@set -euo pipefail; \
 	tmp_dir=$$(mktemp -d); \
+	OIDC_FIXTURE_PORT=$(E2E_OIDC_PORT) \
+		$(PYTHON) backend/tests/fixtures/oidc_server.py \
+		>"$$tmp_dir/oidc.log" 2>&1 & oidc_pid=$$!; \
 	OPENENTERPRISE_TWIN_DATABASE_URL="sqlite+pysqlite:///$$tmp_dir/e2e.db" \
 	OPENENTERPRISE_TWIN_ARTIFACT_DIRECTORY="$$tmp_dir/artifacts" \
+	OPENENTERPRISE_TWIN_DEPLOYMENT_ENVIRONMENT=test \
+	OPENENTERPRISE_TWIN_AUTHENTICATION_MODE=oidc \
+	OPENENTERPRISE_TWIN_OIDC_ISSUER="http://127.0.0.1:$(E2E_OIDC_PORT)/" \
+	OPENENTERPRISE_TWIN_OIDC_AUDIENCE=openenterprise-twin \
+	OPENENTERPRISE_TWIN_OIDC_JWKS_URL="http://127.0.0.1:$(E2E_OIDC_PORT)/jwks" \
 	OPENENTERPRISE_TWIN_EXPERIMENT_WORKERS=1 \
 	OPENENTERPRISE_TWIN_REPLICATION_WORKERS_PER_EXPERIMENT=1 \
+	OPENENTERPRISE_TWIN_JOB_WORKER_MODE=embedded \
+	OPENENTERPRISE_TWIN_JOB_WORKERS=1 \
 	OPENENTERPRISE_TWIN_CORS_ALLOWED_ORIGINS='["http://127.0.0.1:4173"]' \
 		$(PYTHON) -m uvicorn openenterprise_twin.api.app:create_app \
 		--factory --host 127.0.0.1 --port $(E2E_API_PORT) \
 		>"$$tmp_dir/api.log" 2>&1 & api_pid=$$!; \
-	cleanup() { kill $$api_pid 2>/dev/null || true; rm -rf "$$tmp_dir"; }; \
+	cleanup() { kill $$api_pid $$oidc_pid 2>/dev/null || true; rm -rf "$$tmp_dir"; }; \
 	trap cleanup EXIT; \
 	for attempt in $$(seq 1 30); do \
-		if ! kill -0 $$api_pid 2>/dev/null; then cat "$$tmp_dir/api.log"; exit 1; fi; \
-		if $(PYTHON) -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$(E2E_API_PORT)/health', timeout=2)" >/dev/null 2>&1; then break; fi; \
-		if [ "$$attempt" = 30 ]; then cat "$$tmp_dir/api.log"; exit 1; fi; \
+		if ! kill -0 $$api_pid 2>/dev/null || ! kill -0 $$oidc_pid 2>/dev/null; then \
+			cat "$$tmp_dir/api.log" "$$tmp_dir/oidc.log"; exit 1; \
+		fi; \
+		if $(PYTHON) -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$(E2E_API_PORT)/health', timeout=2); urllib.request.urlopen('http://127.0.0.1:$(E2E_OIDC_PORT)/.well-known/openid-configuration', timeout=2)" >/dev/null 2>&1; then break; fi; \
+		if [ "$$attempt" = 30 ]; then cat "$$tmp_dir/api.log" "$$tmp_dir/oidc.log"; exit 1; fi; \
 		sleep 1; \
 	done; \
-	cd frontend && LIVE_E2E=1 VITE_API_BASE_URL='http://127.0.0.1:$(E2E_API_PORT)' npm run e2e
+	cd frontend && \
+		LIVE_E2E=1 \
+		OIDC_E2E=1 \
+		VITE_API_BASE_URL='http://127.0.0.1:$(E2E_API_PORT)' \
+		VITE_AUTH_MODE=oidc \
+		VITE_OIDC_AUTHORITY='http://127.0.0.1:$(E2E_OIDC_PORT)/' \
+		VITE_OIDC_CLIENT_ID=openenterprise-twin-browser \
+		VITE_OIDC_REDIRECT_URI='http://127.0.0.1:4173/auth/callback' \
+		VITE_OIDC_POST_LOGOUT_REDIRECT_URI='http://127.0.0.1:4173/' \
+		VITE_OIDC_SCOPE='openid profile' \
+		npm run e2e

@@ -53,11 +53,15 @@ from openenterprise_twin.infrastructure.models import (
 
 
 class ScenarioRepository:
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, tenant_id: str) -> None:
         self._session = session
+        self._tenant_id = tenant_id
 
     def get(self, scenario_id: str) -> ScenarioRecord | None:
-        return self._session.get(ScenarioRecord, scenario_id)
+        return self._session.get(
+            ScenarioRecord,
+            (self._tenant_id, scenario_id),
+        )
 
     def list(
         self,
@@ -65,7 +69,9 @@ class ScenarioRepository:
         limit: int = 50,
         after_id: str | None = None,
     ) -> tuple[ScenarioRecord, ...]:
-        statement: Select[tuple[ScenarioRecord]] = select(ScenarioRecord)
+        statement: Select[tuple[ScenarioRecord]] = select(ScenarioRecord).where(
+            ScenarioRecord.tenant_id == self._tenant_id
+        )
         if after_id is not None:
             statement = statement.where(ScenarioRecord.scenario_id > after_id)
         statement = statement.order_by(ScenarioRecord.scenario_id).limit(limit)
@@ -73,6 +79,7 @@ class ScenarioRepository:
 
     def create(self, scenario: Scenario) -> ScenarioRecord:
         record = ScenarioRecord(
+            tenant_id=self._tenant_id,
             scenario_id=scenario.scenario_id,
             name=scenario.name,
             company_model_version=scenario.company_model_version,
@@ -85,15 +92,22 @@ class ScenarioRepository:
 
 
 class ExperimentRepository:
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, tenant_id: str) -> None:
         self._session = session
+        self._tenant_id = tenant_id
 
     def get(self, experiment_id: int) -> ExperimentRecord | None:
-        return self._session.get(ExperimentRecord, experiment_id)
+        return self._session.scalar(
+            select(ExperimentRecord).where(
+                ExperimentRecord.tenant_id == self._tenant_id,
+                ExperimentRecord.id == experiment_id,
+            )
+        )
 
     def get_by_idempotency_key(self, key: str) -> ExperimentRecord | None:
         return self._session.scalar(
             select(ExperimentRecord).where(
+                ExperimentRecord.tenant_id == self._tenant_id,
                 ExperimentRecord.idempotency_key == key
             )
         )
@@ -109,6 +123,7 @@ class ExperimentRepository:
             select(ExperimentRecord)
             .where(
                 ExperimentRecord.scenario_id == scenario_id,
+                ExperimentRecord.tenant_id == self._tenant_id,
                 ExperimentRecord.master_seed == master_seed,
                 ExperimentRecord.replication_count == replication_count,
                 ExperimentRecord.status == "completed",
@@ -129,6 +144,7 @@ class ExperimentRepository:
         request_payload: Mapping[str, object],
     ) -> ExperimentRecord:
         record = ExperimentRecord(
+            tenant_id=self._tenant_id,
             scenario_id=scenario_id,
             baseline_experiment_id=baseline_experiment_id,
             status="queued",
@@ -151,6 +167,7 @@ class ExperimentRepository:
         records = tuple(
             self._session.scalars(
                 select(ExperimentRecord).where(
+                    ExperimentRecord.tenant_id == self._tenant_id,
                     ExperimentRecord.status == "running"
                 )
             )
@@ -166,7 +183,10 @@ class ExperimentRepository:
     def pending_ids(self) -> tuple[int, ...]:
         statement = (
             select(ExperimentRecord.id)
-            .where(ExperimentRecord.status == "queued")
+            .where(
+                ExperimentRecord.tenant_id == self._tenant_id,
+                ExperimentRecord.status == "queued",
+            )
             .order_by(ExperimentRecord.created_at, ExperimentRecord.id)
         )
         return tuple(self._session.scalars(statement))
@@ -176,6 +196,7 @@ class ExperimentRepository:
             select(ExperimentRecord)
             .where(
                 ExperimentRecord.id == experiment_id,
+                ExperimentRecord.tenant_id == self._tenant_id,
                 ExperimentRecord.status == "queued",
             )
             .with_for_update(skip_locked=True)
@@ -248,12 +269,19 @@ class ExperimentRepository:
 class SqlAlchemyDecisionEvidenceRepository:
     """Short-transaction adapter for CPU and I/O-heavy decision services."""
 
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        tenant_id: str,
+    ) -> None:
         self._session_factory = session_factory
+        self._tenant_id = tenant_id
 
     def get(self, experiment_id: int) -> ExperimentDecisionRecord | None:
         with self._session_factory() as session:
-            record = ExperimentRepository(session).get(experiment_id)
+            record = ExperimentRepository(session, self._tenant_id).get(
+                experiment_id
+            )
             if record is None:
                 return None
             return ExperimentDecisionRecord(
@@ -279,7 +307,7 @@ class SqlAlchemyDecisionEvidenceRepository:
         payload: Mapping[str, object],
     ) -> None:
         with self._session_factory() as session, session.begin():
-            repository = ExperimentRepository(session)
+            repository = ExperimentRepository(session, self._tenant_id)
             record = repository.get(experiment_id)
             if record is None:
                 raise LookupError(f"experiment '{experiment_id}' is not present")
@@ -291,7 +319,7 @@ class SqlAlchemyDecisionEvidenceRepository:
         payload: Mapping[str, object],
     ) -> None:
         with self._session_factory() as session, session.begin():
-            repository = ExperimentRepository(session)
+            repository = ExperimentRepository(session, self._tenant_id)
             record = repository.get(experiment_id)
             if record is None:
                 raise LookupError(f"experiment '{experiment_id}' is not present")
@@ -316,9 +344,16 @@ class SqlAlchemyDecisionEvidenceRepository:
                 )
                 .join(
                     ScenarioRecord,
-                    ScenarioRecord.scenario_id == ExperimentRecord.scenario_id,
+                    (
+                        ScenarioRecord.tenant_id == ExperimentRecord.tenant_id
+                    )
+                    & (
+                        ScenarioRecord.scenario_id
+                        == ExperimentRecord.scenario_id
+                    ),
                 )
                 .where(
+                    ExperimentRecord.tenant_id == self._tenant_id,
                     ExperimentRecord.status == "completed",
                     ExperimentRecord.baseline_experiment_id.is_not(None),
                 )
@@ -371,8 +406,13 @@ class SqlDecisionLedgerRepository:
     immutable event row, so the audit trail can never diverge from the snapshot.
     """
 
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        tenant_id: str,
+    ) -> None:
         self._session_factory = session_factory
+        self._tenant_id = tenant_id
 
     def get(self, decision_id: str) -> DecisionSnapshot | None:
         with self._session_factory() as session:
@@ -389,6 +429,7 @@ class SqlDecisionLedgerRepository:
         try:
             with self._session_factory() as session, session.begin():
                 record = DecisionLedgerRecord(
+                    tenant_id=self._tenant_id,
                     decision_id=decision_id,
                     title=content.title,
                     owner=content.owner,
@@ -402,6 +443,7 @@ class SqlDecisionLedgerRepository:
                 session.flush()
                 session.add(
                     _event_row(
+                        tenant_id=self._tenant_id,
                         decision_id=decision_id,
                         sequence=1,
                         content_digest=content.content_digest(),
@@ -435,6 +477,7 @@ class SqlDecisionLedgerRepository:
             statement = (
                 update(DecisionLedgerRecord)
                 .where(
+                    DecisionLedgerRecord.tenant_id == self._tenant_id,
                     DecisionLedgerRecord.decision_id == decision_id,
                     DecisionLedgerRecord.version == expected_version,
                 )
@@ -453,6 +496,7 @@ class SqlDecisionLedgerRepository:
                 )
             session.add(
                 _event_row(
+                    tenant_id=self._tenant_id,
                     decision_id=decision_id,
                     sequence=expected_version + 1,
                     content_digest=content.content_digest(),
@@ -475,7 +519,7 @@ class SqlDecisionLedgerRepository:
         with self._session_factory() as session:
             statement: Select[tuple[DecisionLedgerRecord]] = select(
                 DecisionLedgerRecord
-            )
+            ).where(DecisionLedgerRecord.tenant_id == self._tenant_id)
             if after_id is not None:
                 statement = statement.where(
                     DecisionLedgerRecord.decision_id > after_id
@@ -499,13 +543,19 @@ class SqlDecisionLedgerRepository:
     def _load(
         self, session: Session, decision_id: str
     ) -> DecisionSnapshot | None:
-        record = session.get(DecisionLedgerRecord, decision_id)
+        record = session.get(
+            DecisionLedgerRecord,
+            (self._tenant_id, decision_id),
+        )
         if record is None:
             return None
         events = tuple(
             session.scalars(
                 select(DecisionEventRecord)
-                .where(DecisionEventRecord.decision_id == decision_id)
+                .where(
+                    DecisionEventRecord.tenant_id == self._tenant_id,
+                    DecisionEventRecord.decision_id == decision_id,
+                )
                 .order_by(DecisionEventRecord.sequence)
             )
         )
@@ -539,6 +589,7 @@ class SqlDecisionLedgerRepository:
 
 def _event_row(
     *,
+    tenant_id: str,
     decision_id: str,
     sequence: int,
     content_digest: str,
@@ -546,6 +597,7 @@ def _event_row(
     approval: ApprovalRecord | None,
 ) -> DecisionEventRecord:
     return DecisionEventRecord(
+        tenant_id=tenant_id,
         decision_id=decision_id,
         sequence=sequence,
         from_state=transition.from_state,
@@ -569,19 +621,30 @@ def _optional_state(value: str | None) -> DecisionState | None:
 class SqlDatasetRepository:
     """Persistence for ingested historical datasets and their quality reports."""
 
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        tenant_id: str,
+    ) -> None:
         self._session_factory = session_factory
+        self._tenant_id = tenant_id
 
     def get(self, dataset_id: str) -> HistoricalDataset | None:
         with self._session_factory() as session:
-            record = session.get(HistoricalDatasetRecord, dataset_id)
+            record = session.get(
+                HistoricalDatasetRecord,
+                (self._tenant_id, dataset_id),
+            )
             if record is None:
                 return None
             return HistoricalDataset.model_validate(record.payload)
 
     def get_quality(self, dataset_id: str) -> DataQualityReport | None:
         with self._session_factory() as session:
-            record = session.get(HistoricalDatasetRecord, dataset_id)
+            record = session.get(
+                HistoricalDatasetRecord,
+                (self._tenant_id, dataset_id),
+            )
             if record is None:
                 return None
             return DataQualityReport.model_validate(record.quality)
@@ -592,6 +655,7 @@ class SqlDatasetRepository:
         try:
             with self._session_factory() as session, session.begin():
                 record = HistoricalDatasetRecord(
+                    tenant_id=self._tenant_id,
                     dataset_id=dataset.dataset_id,
                     company_id=dataset.company_id,
                     data_digest=dataset.data_digest,
@@ -621,7 +685,7 @@ class SqlDatasetRepository:
         with self._session_factory() as session:
             statement: Select[tuple[HistoricalDatasetRecord]] = select(
                 HistoricalDatasetRecord
-            )
+            ).where(HistoricalDatasetRecord.tenant_id == self._tenant_id)
             if after_id is not None:
                 statement = statement.where(
                     HistoricalDatasetRecord.dataset_id > after_id
@@ -645,12 +709,20 @@ class SqlDatasetRepository:
 class SqlCalibrationRepository:
     """Persistence for calibrations, credibility scores and backtests."""
 
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        tenant_id: str,
+    ) -> None:
         self._session_factory = session_factory
+        self._tenant_id = tenant_id
 
     def get(self, calibration_id: str) -> StoredCalibration | None:
         with self._session_factory() as session:
-            record = session.get(CalibrationRecord, calibration_id)
+            record = session.get(
+                CalibrationRecord,
+                (self._tenant_id, calibration_id),
+            )
             if record is None:
                 return None
             return self._to_stored(record)
@@ -659,6 +731,7 @@ class SqlCalibrationRepository:
         try:
             with self._session_factory() as session, session.begin():
                 record = CalibrationRecord(
+                    tenant_id=self._tenant_id,
                     calibration_id=stored.calibration_id,
                     dataset_id=stored.dataset_id,
                     company_model_version=stored.calibration.company_model_version,
@@ -691,7 +764,9 @@ class SqlCalibrationRepository:
         self, *, limit: int, after_id: str | None
     ) -> tuple[StoredCalibration, ...]:
         with self._session_factory() as session:
-            statement: Select[tuple[CalibrationRecord]] = select(CalibrationRecord)
+            statement: Select[tuple[CalibrationRecord]] = select(
+                CalibrationRecord
+            ).where(CalibrationRecord.tenant_id == self._tenant_id)
             if after_id is not None:
                 statement = statement.where(
                     CalibrationRecord.calibration_id > after_id
@@ -720,12 +795,37 @@ class SqlCalibrationRepository:
 class SqlOptimizationRepository:
     """Persistence for completed policy-optimization runs."""
 
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        tenant_id: str,
+    ) -> None:
         self._session_factory = session_factory
+        self._tenant_id = tenant_id
 
     def get(self, optimization_id: int) -> StoredOptimization | None:
         with self._session_factory() as session:
-            record = session.get(OptimizationRecord, optimization_id)
+            record = session.scalar(
+                select(OptimizationRecord).where(
+                    OptimizationRecord.tenant_id == self._tenant_id,
+                    OptimizationRecord.id == optimization_id,
+                )
+            )
+            if record is None:
+                return None
+            return self._to_stored(record)
+
+    def get_by_source_job_id(
+        self,
+        source_job_id: str,
+    ) -> StoredOptimization | None:
+        with self._session_factory() as session:
+            record = session.scalar(
+                select(OptimizationRecord).where(
+                    OptimizationRecord.tenant_id == self._tenant_id,
+                    OptimizationRecord.source_job_id == source_job_id,
+                )
+            )
             if record is None:
                 return None
             return self._to_stored(record)
@@ -736,19 +836,34 @@ class SqlOptimizationRepository:
         company_model_version: str,
         config: OptimizationConfig,
         result: OptimizationResult,
+        source_job_id: str | None = None,
     ) -> StoredOptimization:
-        with self._session_factory() as session, session.begin():
-            record = OptimizationRecord(
-                company_model_version=company_model_version,
-                digest=result.digest,
-                evaluations=result.evaluations,
-                config=config.model_dump(mode="json"),
-                result=result.model_dump(mode="json"),
-            )
-            session.add(record)
-            session.flush()
-            optimization_id = record.id
-            created_at = record.created_at
+        if source_job_id is not None:
+            existing = self.get_by_source_job_id(source_job_id)
+            if existing is not None:
+                return existing
+        try:
+            with self._session_factory() as session, session.begin():
+                record = OptimizationRecord(
+                    tenant_id=self._tenant_id,
+                    source_job_id=source_job_id,
+                    company_model_version=company_model_version,
+                    digest=result.digest,
+                    evaluations=result.evaluations,
+                    config=config.model_dump(mode="json"),
+                    result=result.model_dump(mode="json"),
+                )
+                session.add(record)
+                session.flush()
+                optimization_id = record.id
+                created_at = record.created_at
+        except IntegrityError:
+            if source_job_id is None:
+                raise
+            existing = self.get_by_source_job_id(source_job_id)
+            if existing is None:
+                raise
+            return existing
         return StoredOptimization(
             optimization_id=optimization_id,
             digest=result.digest,
@@ -763,7 +878,7 @@ class SqlOptimizationRepository:
         with self._session_factory() as session:
             statement: Select[tuple[OptimizationRecord]] = select(
                 OptimizationRecord
-            )
+            ).where(OptimizationRecord.tenant_id == self._tenant_id)
             if before_id is not None:
                 statement = statement.where(OptimizationRecord.id < before_id)
             statement = statement.order_by(OptimizationRecord.id.desc()).limit(limit)
@@ -785,13 +900,19 @@ class SqlOptimizationRepository:
 class SqlMonitoringRepository:
     """Persistence for per-decision monitoring reports."""
 
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        tenant_id: str,
+    ) -> None:
         self._session_factory = session_factory
+        self._tenant_id = tenant_id
 
     def save(self, report: MonitoringReport) -> None:
         with self._session_factory() as session, session.begin():
             session.add(
                 MonitoringReportRecord(
+                    tenant_id=self._tenant_id,
                     decision_id=report.decision_id,
                     recommended_level=report.recommended_level,
                     report=report.model_dump(mode="json"),
@@ -803,7 +924,10 @@ class SqlMonitoringRepository:
         with self._session_factory() as session:
             record = session.scalar(
                 select(MonitoringReportRecord)
-                .where(MonitoringReportRecord.decision_id == decision_id)
+                .where(
+                    MonitoringReportRecord.tenant_id == self._tenant_id,
+                    MonitoringReportRecord.decision_id == decision_id,
+                )
                 .order_by(MonitoringReportRecord.id.desc())
                 .limit(1)
             )

@@ -1,10 +1,12 @@
 """End-to-end contracts for the governed decision-loop API."""
 
 from pathlib import Path
+from time import monotonic, sleep
 
 from fastapi.testclient import TestClient
 
 from openenterprise_twin.api.app import create_app
+from openenterprise_twin.application.identity import Role
 from openenterprise_twin.domain.ledger import DecisionContent
 from openenterprise_twin.infrastructure.settings import Settings
 
@@ -14,6 +16,13 @@ def _settings(tmp_path: Path, **overrides: object) -> Settings:
         database_url=f"sqlite+pysqlite:///{tmp_path / 'loop.db'}",
         artifact_directory=tmp_path / "artifacts",
         experiment_workers=1,
+        replication_workers_per_experiment=1,
+        job_worker_mode="embedded",
+        job_workers=1,
+        job_poll_interval_seconds=0.01,
+        job_lease_seconds=2,
+        job_heartbeat_seconds=0.25,
+        job_retry_delay_seconds=0,
         database_pool_size=2,
         database_max_overflow=0,
         max_optimization_evaluations=60,
@@ -21,8 +30,40 @@ def _settings(tmp_path: Path, **overrides: object) -> Settings:
     )
 
 
-def _client(tmp_path: Path) -> TestClient:
-    return TestClient(create_app(_settings(tmp_path)))
+def _client(
+    tmp_path: Path,
+    *,
+    subject: str = "local-operator",
+    roles: tuple[Role, ...] = ("admin",),
+) -> TestClient:
+    return TestClient(
+        create_app(
+            _settings(
+                tmp_path,
+                local_subject=subject,
+                local_roles=roles,
+            )
+        )
+    )
+
+
+def _wait_for_job_result(
+    client: TestClient,
+    location: str,
+) -> dict[str, object]:
+    deadline = monotonic() + 20
+    while monotonic() < deadline:
+        response = client.get(location)
+        assert response.status_code == 200
+        job = response.json()
+        if job["status"] == "succeeded":
+            result = client.get(job["result_location"])
+            assert result.status_code == 200
+            return result.json()
+        if job["status"] in {"failed", "cancelled"}:
+            raise AssertionError(f"job failed: {job['problem']}")
+        sleep(0.02)
+    raise AssertionError("job did not terminate")
 
 
 def _decision_content() -> dict[str, object]:
@@ -58,11 +99,15 @@ def test_calibration_studio_flow(tmp_path: Path) -> None:
                 "backtest_cutoff": "2024-12-31",
             },
         )
-        assert calibrate.status_code == 201
-        credibility = calibrate.json()["credibility"]
+        assert calibrate.status_code == 202
+        calibration = _wait_for_job_result(
+            client,
+            calibrate.headers["location"],
+        )
+        credibility = calibration["credibility"]
         assert credibility["band"] == "decision_grade"
         assert credibility["score"] >= 80.0
-        assert calibrate.json()["backtests"]
+        assert calibration["backtests"]
 
 
 def test_synthetic_ingestion_respects_observation_cap(tmp_path: Path) -> None:
@@ -158,8 +203,8 @@ def test_optimization_flow_and_budget_cap(tmp_path: Path) -> None:
                 "master_seed": 5,
             },
         )
-        assert response.status_code == 201
-        payload = response.json()
+        assert response.status_code == 202
+        payload = _wait_for_job_result(client, response.headers["location"])
         assert payload["result"]["frontier"]
         assert payload["evaluations"] <= 40
 
@@ -235,50 +280,49 @@ def test_adaptive_contradiction_is_rejected(tmp_path: Path) -> None:
 
 
 def test_decision_lifecycle_and_optimistic_conflict(tmp_path: Path) -> None:
-    with _client(tmp_path) as client:
-        created = client.post(
+    with _client(tmp_path, subject="cfo", roles=("analyst",)) as analyst:
+        created = analyst.post(
             "/api/v1/ledger/decisions",
             json={"decision_id": "dec-1", "content": _decision_content()},
         )
         assert created.status_code == 201
         assert created.json()["state"] == "draft"
+        assert created.json()["owner"] == "cfo"
 
         assert (
-            client.post(
+            analyst.post(
                 "/api/v1/ledger/decisions/dec-1/transitions",
                 json={
                     "expected_version": 1,
                     "target": "evidence_ready",
-                    "actor": "cfo",
                 },
             ).status_code
             == 200
         )
         # Stale version is rejected by optimistic concurrency control.
-        conflict = client.post(
+        conflict = analyst.post(
             "/api/v1/ledger/decisions/dec-1/transitions",
             json={
                 "expected_version": 1,
                 "target": "under_review",
-                "actor": "cfo",
             },
         )
         assert conflict.status_code == 409
 
-        client.post(
+        analyst.post(
             "/api/v1/ledger/decisions/dec-1/transitions",
-            json={"expected_version": 2, "target": "under_review", "actor": "cfo"},
+            json={"expected_version": 2, "target": "under_review"},
         )
-        snapshot = client.get("/api/v1/ledger/decisions/dec-1").json()
+        snapshot = analyst.get("/api/v1/ledger/decisions/dec-1").json()
         digest = DecisionContent.model_validate(snapshot["content"]).content_digest()
-        approved = client.post(
+
+    with _client(tmp_path, subject="ceo", roles=("approver",)) as approver:
+        approved = approver.post(
             "/api/v1/ledger/decisions/dec-1/transitions",
             json={
                 "expected_version": 3,
                 "target": "approved",
-                "actor": "ceo",
                 "approval": {
-                    "approver": "ceo",
                     "decision": "approve",
                     "occurred_at": "2026-07-23T12:00:00Z",
                     "approved_content_digest": digest,
@@ -287,36 +331,37 @@ def test_decision_lifecycle_and_optimistic_conflict(tmp_path: Path) -> None:
         )
         assert approved.status_code == 200
         assert approved.json()["state"] == "approved"
+        assert approved.json()["approvals"][0]["approver"] == "ceo"
 
-        packet = client.get("/api/v1/ledger/decisions/dec-1/packet")
+        packet = approver.get("/api/v1/ledger/decisions/dec-1/packet")
         assert packet.status_code == 200
         assert packet.json()["state"] == "approved"
 
 
 def test_self_approval_is_rejected_over_http(tmp_path: Path) -> None:
-    with _client(tmp_path) as client:
-        client.post(
+    with _client(tmp_path, subject="cfo", roles=("analyst",)) as analyst:
+        analyst.post(
             "/api/v1/ledger/decisions",
             json={"decision_id": "dec-1", "content": _decision_content()},
         )
-        client.post(
+        analyst.post(
             "/api/v1/ledger/decisions/dec-1/transitions",
-            json={"expected_version": 1, "target": "evidence_ready", "actor": "cfo"},
+            json={"expected_version": 1, "target": "evidence_ready"},
         )
-        client.post(
+        analyst.post(
             "/api/v1/ledger/decisions/dec-1/transitions",
-            json={"expected_version": 2, "target": "under_review", "actor": "cfo"},
+            json={"expected_version": 2, "target": "under_review"},
         )
-        snapshot = client.get("/api/v1/ledger/decisions/dec-1").json()
+        snapshot = analyst.get("/api/v1/ledger/decisions/dec-1").json()
         digest = DecisionContent.model_validate(snapshot["content"]).content_digest()
-        response = client.post(
+
+    with _client(tmp_path, subject="cfo", roles=("approver",)) as approver:
+        response = approver.post(
             "/api/v1/ledger/decisions/dec-1/transitions",
             json={
                 "expected_version": 3,
                 "target": "approved",
-                "actor": "cfo",
                 "approval": {
-                    "approver": "cfo",
                     "decision": "approve",
                     "occurred_at": "2026-07-23T12:00:00Z",
                     "approved_content_digest": digest,
@@ -324,6 +369,57 @@ def test_self_approval_is_rejected_over_http(tmp_path: Path) -> None:
             },
         )
         assert response.status_code == 422
+
+
+def test_ledger_rejects_forged_request_identities(tmp_path: Path) -> None:
+    content = _decision_content()
+    content["owner"] = "forged-owner"
+    with _client(
+        tmp_path,
+        subject="authenticated-analyst",
+        roles=("analyst",),
+    ) as analyst:
+        created = analyst.post(
+            "/api/v1/ledger/decisions",
+            json={"decision_id": "identity-bound", "content": content},
+        )
+        forged_actor = analyst.post(
+            "/api/v1/ledger/decisions/identity-bound/transitions",
+            json={
+                "expected_version": 1,
+                "target": "evidence_ready",
+                "actor": "forged-actor",
+            },
+        )
+
+    assert created.status_code == 201
+    assert created.json()["owner"] == "authenticated-analyst"
+    assert created.json()["content"]["owner"] == "authenticated-analyst"
+    assert created.json()["transitions"][0]["actor"] == "authenticated-analyst"
+    assert forged_actor.status_code == 422
+    assert forged_actor.json()["code"] == "request_validation"
+
+    with _client(
+        tmp_path,
+        subject="authenticated-approver",
+        roles=("approver",),
+    ) as approver:
+        forged_approver = approver.post(
+            "/api/v1/ledger/decisions/missing/transitions",
+            json={
+                "expected_version": 1,
+                "target": "approved",
+                "approval": {
+                    "approver": "forged-approver",
+                    "decision": "approve",
+                    "occurred_at": "2026-07-23T12:00:00Z",
+                    "approved_content_digest": "a" * 64,
+                },
+            },
+        )
+
+    assert forged_approver.status_code == 422
+    assert forged_approver.json()["code"] == "request_validation"
 
 
 def test_monitoring_flow(tmp_path: Path) -> None:

@@ -2,127 +2,162 @@
 
 ## Scope and assumptions
 
-This v0.5 threat model covers the public single-tenant reference deployment:
-browser, Nginx edge, FastAPI API, bounded in-process experiment runner,
-PostgreSQL and the content-addressed filesystem artifact store. It assumes TLS
-terminates at a trusted ingress, the company model contains commercially
-sensitive operating assumptions but no regulated personal data, and production
-operators configure a high-entropy API key.
+This model covers the v0.6 React application, Nginx edge, FastAPI API,
+standalone or embedded durable workers, PostgreSQL state, content-addressed
+filesystem artifacts and configured OIDC/JWKS traffic.
 
-Out of scope for this release are multi-tenant isolation, end-user identity federation, third-party plugin execution and ERP/CRM connectors. Those capabilities require a new threat-model review before implementation.
+It assumes TLS terminates at a trusted ingress, PostgreSQL and artifact storage
+are private, deployment secrets come from a secret manager, and operators
+apply network controls, rate limits, backups and central logging. The included
+Northstar data is synthetic. A deployment using real company data must add its
+own classification, retention, privacy and regulatory controls.
 
 ## Assets
 
-| Asset | Security objective |
-| --- | --- |
-| Company/scenario assumptions | Confidentiality and integrity |
-| Experiment requests and lifecycle | Integrity, availability and non-duplication |
-| Simulation artifacts | Integrity, provenance and controlled disclosure |
-| Comparisons and executive briefs | Integrity, traceability and publication stability |
-| PostgreSQL credentials and API key | Confidentiality and rotation |
-| Compute capacity | Availability and bounded consumption |
-| Audit and trace identifiers | Integrity and operational usefulness |
-| Build metadata and operational metrics | Integrity and bounded disclosure |
+- OIDC access tokens, JWKS trust configuration and API-key service credentials.
+- Subject, tenant and role assignments.
+- Company models, scenarios, historical observations and calibrated parameters.
+- Job requests, leases, progress, terminal problems and result references.
+- Experiment traces, comparisons, recommendations and executive briefs.
+- Decision-ledger events, approvals, outcome monitoring and audit records.
+- PostgreSQL credentials, artifact contents, digests and backups.
+- Availability of bounded simulation and analytics capacity.
 
 ## Trust boundaries
 
 ```mermaid
 flowchart LR
-    U["Operator browser"] -->|"TLS + same-origin HTTP"| E["Trusted ingress / Nginx"]
-    E -->|"X-API-Key + /api/v1"| A["FastAPI process"]
-    A --> R["Bounded experiment runner"]
-    A --> P[("PostgreSQL")]
-    R --> P
-    R --> F["Artifact filesystem"]
+    U["Untrusted browser/user"] -->|"TLS"| E["Trusted ingress + Nginx"]
+    I["Configured OIDC provider"] -->|"code + PKCE / JWKS"| U
+    E -->|"same-origin API"| A["FastAPI control plane"]
+    M["Machine client"] -->|"API key"| A
+    A --> P[("Private PostgreSQL")]
+    A --> F["Private artifact namespace"]
+    W["Durable workers"] --> P
+    W --> F
+    W --> K["Deterministic analytical core"]
 ```
 
-1. **Internet to edge.** Requests are untrusted until host, size and browser-security policy checks pass.
-2. **Edge to API.** The edge injects the API key; clients must not receive it.
-3. **API to persistence.** Pydantic/domain validation and parameterized SQLAlchemy queries constrain data crossing this boundary.
-4. **Runner to artifacts.** Artifacts are written content-addressed and verified before decision evidence is used.
-5. **Deployment control plane.** Environment variables, volumes, TLS and log collection are operator responsibilities.
+Untrusted inputs include every URL, header, token, body, CSV cell, persisted
+user value and job request. OIDC issuer/JWKS URLs and CSP identity origins are
+trusted deployment configuration, not request-controlled destinations.
 
 ## Primary threats and mitigations
 
-| ID | Threat | Impact | Implemented mitigation | Residual action |
+| ID | Threat | Impact | Implemented mitigation | Residual/operational control |
 | --- | --- | --- | --- | --- |
-| T1 | Unauthenticated read or experiment submission | Disclosure, manipulated decisions, compute abuse | Production startup requires `OPENENTERPRISE_TWIN_API_KEY`; business routes plus `/api/v1/system/info` and `/api/v1/system/metrics` require a constant-time checked key; Nginx injects it server-side | Rotate key and restrict ingress; adopt OIDC/RBAC before multiple user groups |
-| T2 | Default or exposed database credentials | Complete data compromise | Compose requires an operator-supplied password and binds PostgreSQL to `127.0.0.1`; repository ignores `.env` | Use a secret manager and private network in deployed environments |
-| T3 | Oversized JSON or excessive experiment request | Memory/CPU exhaustion | 1 MiB request-body limit, maximum 1,000 replications, bounded workers/queue and a default 50,000 simulated-period budget | Add per-principal rate limiting at ingress for public deployments |
-| T4 | Duplicate or replayed experiment submission | Resource waste and confusing evidence | Bounded `Idempotency-Key`, payload conflict detection and immutable scenario identifiers | Set ingress request-rate alerts |
-| T5 | Artifact tampering or mismatched shock tapes | False recommendation | SHA-256 content addressing, atomic writes, trace/result/tape digest reconciliation and paired tape-alignment checks | Store artifacts in versioned immutable object storage for multi-node operation |
-| T6 | Host-header or cross-origin abuse | Poisoned routing or browser data access | Trusted-host middleware, deny-by-default CORS and same-origin production proxy | Configure exact production hosts and TLS ingress |
-| T7 | Browser injection or clickjacking | Operator session/action compromise | CSP, `frame-ancestors 'none'`, `X-Frame-Options: DENY`, `nosniff`, restrictive permissions policy and no HTML rendering of model content | Keep dependencies patched and add CSP violation reporting at ingress |
-| T8 | Secret persisted in browser or repository | Credential disclosure | API key remains at Nginx; scenario drafts use session storage; `.env` and artifacts are ignored | Clear browser session on shared workstations and rotate after suspected exposure |
-| T9 | Invalid model input creates unsafe recommendation | Decision integrity loss | Strict Pydantic models, company compatibility validation, physical/accounting invariants, hard-constraint precedence and 30-run adoption gate | Calibrate and independently validate models before operational use |
-| T10 | Stale or fabricated executive evidence | Governance failure | Briefs cite only computed metric IDs and carry model, assumptions, seed, replication, plugin and digest provenance | Export audit logs to append-only retention for regulated use |
-| T11 | Dependency or container compromise | Code execution | Locked npm install, bounded Python versions, non-root backend image, minimal multi-stage images and CI security scanning | Pin reviewed release digests and sign production images |
-| T12 | Sensitive data leaked in logs, errors or metrics | Confidentiality loss | Stable problem details suppress stack traces; audit records omit payloads and keys; metrics aggregate only method, registered route template and status family | Apply central-log access controls and retention policy |
-| T13 | Operational endpoints disclose topology or secrets | Reconnaissance and credential disclosure | `/health` returns process status only; `/ready` returns a uniform RFC 9457 failure; build metadata and bounded metrics require authentication and expose no URLs, credentials, business identifiers or payloads | Restrict operational endpoints at ingress and monitor repeated probe failures |
+| T1 | Missing, forged or replayed bearer | Unauthorized access | Strict algorithm/signature/issuer/audience/lifetime/claim validation; short-lived token contract; no tokens in URLs | Identity-provider revocation, MFA and short token lifetime |
+| T2 | Malicious JWKS or key rotation abuse | Identity forgery or outage | Exact configured URL, HTTPS in production, no redirects, timeout/size cap, exact `kid`/algorithm match, bounded cache and one unknown-key refresh | Monitor provider health and rotation |
+| T3 | Confused deputy between API key and OIDC | Privilege escalation | Authentication mode is exclusive; mixed credentials are rejected; browser proxy never injects service keys | Separate machine and human ingress policy |
+| T4 | Frontend-only role bypass | Unauthorized mutation | FastAPI security dependencies enforce every protected route; frontend checks are UX only | Keep authorization matrix required in CI |
+| T5 | Cross-tenant identifier probing | Confidentiality/integrity loss | Principal supplies tenant; repositories require tenant and filter all access; foreign keys and uniqueness are tenant-composite; inaccessible resources return `404` | PostgreSQL matrix tests and restricted DB access |
+| T6 | Forged actor/approver identity | Governance fraud | Ledger identity derives from authenticated subject; approval policy and separation of duties are server-side | Identity-provider account governance |
+| T7 | Duplicate or replayed analytical submission | Compute abuse/inconsistent evidence | Tenant+kind idempotency, canonical request comparison and `409` on conflicting reuse | Client-generated high-entropy idempotency keys |
+| T8 | Two workers execute the same lease | Duplicate side effects | PostgreSQL skip-locked claim, lease owner checks and stale-writer rejection | Monitor stale leases and attempts |
+| T9 | Worker dies while running | Stuck work/availability loss | Lease expiry, bounded retry, restart recovery and terminal `lease_expired` | Worker supervision and queue-age alerts |
+| T10 | Cancellation races with completion | Incorrect terminal state | Cooperative safe-point checks and atomic terminal transitions | Preserve job/audit evidence during incidents |
+| T11 | Unbounded analytics or upload | CPU/memory denial of service | Request/body, row, period, evaluation, population and replication caps | Ingress rate limits and capacity planning |
+| T12 | SQL, command, template or DSL injection | Code/data compromise | SQLAlchemy parameterization; no shell execution in request paths; no server templates; closed allow-listed adaptive DSL without `eval` | Static analysis and dependency updates |
+| T13 | CSV formula injection | Client-side code execution | Export neutralises `=`, `+`, `-` and `@`; import treats cells as data | Open exports in patched spreadsheet software |
+| T14 | XSS steals session-scoped bearer | Account compromise | React escaping, no raw-HTML sinks, strict CSP, self-hosted dependencies and short-lived session token | CSP provider allowlist, rapid token expiry and IdP session controls |
+| T15 | Arbitrary outbound fetch / SSRF | Internal network access | No request-controlled outbound connector; OIDC fetch uses configured URL only | Future connectors require destination/IP controls |
+| T16 | Artifact tampering or mismatch | Fabricated evidence | Canonical SHA-256 addressing, digest verification, atomic write and DB digest reference | Encrypted durable storage and coherent backups |
+| T17 | Stale or fabricated executive evidence | Bad decision/governance failure | Briefs cite computed metric IDs and retain model, assumptions, seed, replication and digest provenance; evidence gate blocks exploratory adoption | Independent model validation |
+| T18 | Sensitive error/log/metric labels | Confidentiality loss | Stable RFC 9457 responses, payload-free audit, no token/key logging and bounded aggregate labels | Central-log access/retention controls |
+| T19 | Dependency or image compromise | Code execution | Hash-pinned Python runtime, npm lock, audits, CodeQL, multi-stage images and non-root API runtime | Pin/sign reviewed production image digests |
+| T20 | Host, framing or browser-policy abuse | Phishing/XSS amplification | Trusted hosts, `frame-ancestors`/DENY, `nosniff`, referrer/permissions policy, no-store and CSP | Verify runtime ingress headers |
 
 ## Security invariants
 
-- Production configuration without an API key must fail closed at startup.
-- `/health` and `/api/v1/health` are dependency-free and expose only process status.
-- `/ready` reports only aggregate readiness; it never returns database URLs, paths or exception details.
-- System information and metrics require authentication and never expose credentials, business payloads or unbounded identifiers.
-- A request cannot allocate more simulated periods than the configured budget.
-- Candidate evidence cannot be compared unless baseline and candidate share seed, replication count, lifecycle, model/schema and aligned shock-tape digests.
-- Exploratory evidence cannot produce an adoption decision.
-- A hard guardrail breach always produces `do_not_adopt` regardless of upside metrics.
-- Stored artifact content must match the digest referenced by PostgreSQL before it can support a brief.
-- API errors never return Python stack traces or credentials.
+- Production rejects `local` authentication.
+- OIDC production configuration uses HTTPS and an asymmetric algorithm
+  allowlist.
+- API-key mode maps one secret to one explicit service-account subject, tenant
+  and role set; it is not a browser session.
+- A request cannot select or override its tenant.
+- Every business repository requires a tenant and cannot return a row owned by
+  another tenant.
+- Frontend visibility never grants API authorization.
+- A ledger actor cannot approve the same governed decision as another claimed
+  identity.
+- A job has at most one valid lease owner; stale workers cannot heartbeat,
+  complete or fail it.
+- Terminal jobs never return to an active state.
+- A result link exists only for a succeeded job with a persisted digest.
+- A request cannot allocate work beyond configured analytical budgets.
+- Candidate evidence cannot be compared unless baseline and candidate have
+  compatible seed, replication, lifecycle, versions and shock-tape evidence.
+- Exploratory evidence cannot produce adoption.
+- A hard guardrail breach always produces `do_not_adopt`.
+- Stored artifact content must match the digest referenced by PostgreSQL.
+- API responses never return Python tracebacks, credentials or tokens.
+
+## OIDC and browser controls
+
+The browser uses authorization code + PKCE as a public client. OIDC transaction
+state and the short-lived user are held in `sessionStorage` to survive the
+redirect; the active API token is copied into application memory and attached
+only to strict relative API paths. `apiFetch` rejects absolute and
+scheme-relative destinations before adding authorization.
+
+Because any same-origin XSS can read JavaScript-accessible tokens, the frontend:
+
+- has no `dangerouslySetInnerHTML`, direct HTML insertion or dynamic code
+  execution;
+- self-hosts scripts, styles and fonts;
+- enforces a CSP without `unsafe-inline` or `unsafe-eval`;
+- adds only the exact OIDC origin to `connect-src`;
+- uses React text rendering for API-provided values;
+- publishes no browser client secret or API key.
+
+This is defense in depth, not a claim that Web Storage is immune to XSS.
+
+## Durable-job abuse and recovery
+
+Job payloads reference tenant-owned resources and are validated before
+submission. Idempotency prevents accidental duplicate work, while kind-specific
+budgets cap compute. Workers use short claim transactions, execute outside
+transactions, heartbeat in a separate thread and commit only while retaining
+the lease.
+
+Expired leases are requeued only within the attempt budget. Handler
+side-effects are source-job-idempotent, so recovery cannot create a second
+logical optimization or experiment. Cancellation is requested, persisted and
+observed at safe points. Job problems expose stable codes/details, not internal
+exceptions.
 
 ## Deployment checklist
 
-- Terminate TLS at a trusted ingress and expose only the Nginx service.
-- Set exact trusted hosts, a high-entropy API key and a private PostgreSQL URL through a secret manager.
-- Mount the artifact directory on encrypted durable storage with backups and restricted permissions.
-- Run Alembic before application rollout; never grant the runtime role schema-owner permissions unnecessarily.
-- Apply ingress rate limits, request timeouts and network policies around API, database and artifact storage.
-- Send audit/application logs to centralized append-only storage and alert on repeated 401, 413, 422-budget and 429 responses.
-- Run CI dependency, static-analysis, unit, PostgreSQL integration, container and browser release gates before deployment.
-- Monitor `/ready` separately from `/health`; restart only for failed liveness and investigate dependency failures before replacing a healthy process.
-- Keep the orchestrator termination grace period longer than `OPENENTERPRISE_TWIN_EXPERIMENT_SHUTDOWN_TIMEOUT_SECONDS`.
+- Terminate TLS at a trusted ingress and expose only the frontend edge.
+- Configure exact trusted hosts and either OIDC or a machine-only API key.
+- Register exact callback/logout URLs and use authorization code + PKCE.
+- Set `OIDC_CONNECT_SRC` to one exact HTTPS identity-provider origin.
+- Keep PostgreSQL private and use a runtime role without unnecessary schema
+  ownership.
+- Give every API/worker the same release, database and artifact namespace.
+- Keep heartbeat shorter than lease and termination grace longer than job
+  shutdown timeout.
+- Mount artifacts on encrypted durable storage with coherent database backups.
+- Apply ingress rate, body and timeout controls.
+- Centralize payload-free audit/application logs and alert on repeated
+  authentication, authorization, budget and stale-lease events.
+- Run locked audits, CodeQL, PostgreSQL migrations/isolation/concurrency,
+  container and live OIDC browser gates before deployment.
+- Monitor `/health`, `/ready`, queue age, attempts and stale leases separately.
 
 ## Accepted residual risks
 
-The release uses one shared API-key identity, an in-process worker,
-process-local metrics and a filesystem artifact store. It therefore cannot
-provide per-user authorization, identity-bound approval separation, horizontal
-worker failover, a durable distributed queue, fleet-wide telemetry or
-multi-node artifacts without shared storage. The synthetic model is safe for
-demonstration but does not establish that a real-company decision is valid.
-These are explicit product boundaries, not controls delegated to the simulator.
+- The filesystem artifact adapter is multi-node only when backed by a genuinely
+  shared durable filesystem; object storage is not yet included.
+- PostgreSQL is both transaction store and work queue. It is appropriate for
+  the current bounded scale, not claimed as a high-throughput broker.
+- Browser OIDC tokens remain exposed to a successful same-origin XSS until they
+  expire.
+- The built-in API-key adapter has one active secret and no overlapping
+  rotation window.
+- Metrics are process-local, not fleet-wide telemetry.
+- The synthetic model demonstrates mechanics but does not validate a real
+  company's decision.
 
-## Governed decision-loop surfaces
-
-The governed decision loop adds new input surfaces, each threat-modelled and mitigated:
-
-- **Historical data ingestion** (`POST /api/v1/datasets`, `POST /api/v1/datasets/csv`). JSON and long-format CSV are both accepted. CSV is parsed with the standard-library reader (never evaluated) and validated field by field against the canonical series registry, so a malicious cell cannot execute; observation counts are capped in the calibration service on every path (including synthetic generation) and by the global request-body limit; provenance references are stored, never dereferenced, avoiding SSRF and path traversal. CSV export (`GET /api/v1/datasets/{id}/export.csv`) neutralises leading formula characters (`= + - @`) so a downloaded dataset is safe to open in a spreadsheet.
-- **Optimization jobs** (`POST /api/v1/optimizations`). The evaluation budget is capped server-side by `max_optimization_evaluations` and population/generation bounds, so a request cannot exhaust CPU; runs are deterministic and cached; results are content-addressed.
-- **Adaptive policy DSL** (`/api/v1/adaptive-policies/*`). The language is closed: metrics, operators and actions are allow-listed literals, magnitudes are bounded, and there is no `eval`, expression parser or dynamic dispatch. Contradictory rules are rejected at validation. The DSL cannot express arbitrary computation or reach the host.
-- **Decision ledger** (`/api/v1/ledger/decisions/*`). Transitions use optimistic concurrency (a conditional UPDATE guards against lost updates); approvals require separation of duties and are bound to the exact approved content digest, so approved evidence cannot be silently changed; the event log is append-only. Concurrent creation of the same decision surfaces as a clean `409`, never an unhandled error. Because this release uses one shared API-key identity, the ledger `actor` and `approver` labels (e.g. `cfo`, `ceo`) are declared by the caller and separation of duties is enforced on those labels; the authenticated principal is recorded in the append-only request audit log. Binding each label to a distinct authenticated user is an OIDC/RBAC deployment extension, consistent with the accepted residual risks below.
-- **Outcome monitoring** (`/api/v1/ledger/decisions/{id}/outcomes`). Inputs are schema-validated and matched to existing predictions; alerts are deduplicated and cooldown-limited to prevent alert flooding.
-
-All decision-loop surfaces inherit authentication, trusted-host validation,
-request-size limits, RFC 9457 problem responses without stack traces, security
-headers and append-only audit logging of mutating requests. No secrets appear
-in code, examples or logs.
-
-## v0.5 operational surfaces
-
-- **Readiness** (`GET /ready`) executes a bounded `SELECT 1` and verifies the
-  artifact directory with an exclusive temporary file, flush, `fsync`, exact
-  read and cleanup. Any dependency failure maps to the same safe `503`
-  response.
-- **Build information** (`GET /api/v1/system/info`) returns only the package
-  version, deployment environment, optional lowercase hexadecimal build commit
-  and implemented capability identifiers. Configuration rejects malformed
-  build identifiers.
-- **Operational metrics** (`GET /api/v1/system/metrics`) are lock-protected,
-  process-local aggregates. Labels are bounded and unknown paths collapse to
-  `unmatched`; no principal, tenant, scenario or trace identifier is retained.
-- **Response hardening** applies no-store, anti-sniffing, anti-framing,
-  no-referrer and restrictive browser-permission headers at the API boundary,
-  including problem responses and probe routes.
+These boundaries are explicit product constraints, not security controls
+delegated to the simulation engine.

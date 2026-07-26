@@ -10,8 +10,8 @@ RUN npm run build
 FROM nginx:1.27-alpine AS runtime
 
 ENV API_UPSTREAM=http://api:8000 \
-    API_KEY= \
-    NGINX_ENVSUBST_FILTER=^(API_UPSTREAM|API_KEY)$
+    OIDC_CONNECT_SRC= \
+    NGINX_ENVSUBST_FILTER=^(API_UPSTREAM|OIDC_CONNECT_SRC)$
 
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=builder /build/dist /usr/share/nginx/html

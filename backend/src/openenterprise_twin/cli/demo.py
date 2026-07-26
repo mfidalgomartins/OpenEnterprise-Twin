@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
+from openenterprise_twin.api.jobs import JobRead
 from openenterprise_twin.api.schemas import (
     ExperimentCreate,
     ExperimentRead,
@@ -30,7 +31,7 @@ from openenterprise_twin.infrastructure.database import (
     create_database_engine,
     create_session_factory,
 )
-from openenterprise_twin.infrastructure.models import Base
+from openenterprise_twin.infrastructure.models import DEFAULT_TENANT_ID, Base
 from openenterprise_twin.infrastructure.repositories import ScenarioRepository
 from openenterprise_twin.infrastructure.settings import Settings
 from openenterprise_twin.reporting.brief import ExecutiveBrief
@@ -141,13 +142,16 @@ def build_flagship_scenario(*, horizon_days: int = 515) -> Scenario:
     )
 
 
-def seed_northstar(session_factory: sessionmaker[Session]) -> bool:
+def seed_northstar(
+    session_factory: sessionmaker[Session],
+    tenant_id: str = DEFAULT_TENANT_ID,
+) -> bool:
     """Persist the baseline scenario once; return whether it was created."""
 
     baseline = build_baseline_scenario()
     expected_payload = baseline.model_dump(mode="json")
     with session_factory() as session, session.begin():
-        repository = ScenarioRepository(session)
+        repository = ScenarioRepository(session, tenant_id)
         existing = repository.get(baseline.scenario_id)
         if existing is None:
             repository.create(baseline)
@@ -168,7 +172,15 @@ def seed_from_settings(settings: Settings | None = None) -> bool:
     try:
         if make_url(resolved_settings.database_url).get_backend_name() == "sqlite":
             Base.metadata.create_all(engine)
-        return seed_northstar(create_session_factory(engine))
+        tenant_id = (
+            resolved_settings.service_account_tenant_id
+            if resolved_settings.authentication_mode == "api_key"
+            else resolved_settings.local_tenant_id
+        )
+        return seed_northstar(
+            create_session_factory(engine),
+            tenant_id,
+        )
     finally:
         engine.dispose()
 
@@ -317,31 +329,39 @@ def _submit_and_wait(
         headers={"Idempotency-Key": idempotency_key},
     )
     _raise_for_status(response)
-    experiment = ExperimentRead.model_validate(response.json())
+    job = JobRead.model_validate(response.json())
+    location = response.headers.get("location", f"/api/v1/jobs/{job.job_id}")
     deadline = monotonic() + timeout_seconds
-    while experiment.status not in {"completed", "failed"}:
+    while job.status not in {"succeeded", "failed", "cancelled"}:
         if monotonic() >= deadline:
             raise DemoError(
-                f"experiment '{experiment.id}' did not complete within "
+                f"job '{job.job_id}' did not complete within "
                 f"{timeout_seconds:g} seconds"
             )
         if poll_interval_seconds:
             sleep(poll_interval_seconds)
-        response = client.get(f"/api/v1/experiments/{experiment.id}")
+        response = client.get(location)
         _raise_for_status(response)
-        experiment = ExperimentRead.model_validate(response.json())
-    if experiment.status == "failed":
+        job = JobRead.model_validate(response.json())
+    if job.status != "succeeded" or job.result_resource_id is None:
+        problem = job.problem or {}
         raise DemoError(
-            f"experiment '{experiment.id}' failed with "
-            f"{experiment.error_code}: {experiment.error_detail}"
+            f"job '{job.job_id}' failed with "
+            f"{problem.get('code', job.status)}: "
+            f"{problem.get('detail', 'No result was produced.')}"
         )
-    return experiment
+    response = client.get(
+        f"/api/v1/experiments/{job.result_resource_id}"
+    )
+    _raise_for_status(response)
+    return ExperimentRead.model_validate(response.json())
 
 
 def run_autopilot_demo(
     client: httpx.Client,
     *,
     seed: int = DEFAULT_MASTER_SEED,
+    approver_client: httpx.Client | None = None,
 ) -> AutopilotResult:
     """Drive the full closed loop through the API and return its evidence."""
 
@@ -350,7 +370,7 @@ def run_autopilot_demo(
         "/api/v1/datasets/synthetic",
         {"dataset_id": "northstar-history", "days": 540},
     )
-    calibration = _post_json(
+    calibration = _post_job_result(
         client,
         "/api/v1/calibrations",
         {
@@ -359,7 +379,7 @@ def run_autopilot_demo(
             "backtest_cutoff": "2024-12-31",
         },
     )
-    optimization = _post_json(
+    optimization = _post_job_result(
         client,
         "/api/v1/optimizations",
         {
@@ -402,12 +422,17 @@ def run_autopilot_demo(
         },
     )
     content = _demo_decision_content()
-    _post_json(
+    decision = _post_json(
         client,
         "/api/v1/ledger/decisions",
         {"decision_id": "northstar-pricing", "content": content},
     )
-    _walk_decision_to_monitoring(client, "northstar-pricing", content)
+    _walk_decision_to_monitoring(
+        client,
+        "northstar-pricing",
+        decision["content"],
+        approver_client=approver_client or client,
+    )
     monitoring = _post_json(
         client,
         "/api/v1/ledger/decisions/northstar-pricing/outcomes",
@@ -471,31 +496,31 @@ def _walk_decision_to_monitoring(
     client: httpx.Client,
     decision_id: str,
     content: dict[str, object],
+    *,
+    approver_client: httpx.Client,
 ) -> None:
     base = f"/api/v1/ledger/decisions/{decision_id}/transitions"
     _post_json(client, base, {
-        "expected_version": 1, "target": "evidence_ready", "actor": "cfo"
+        "expected_version": 1, "target": "evidence_ready"
     })
     _post_json(client, base, {
-        "expected_version": 2, "target": "under_review", "actor": "cfo"
+        "expected_version": 2, "target": "under_review"
     })
     digest = DecisionContent.model_validate(content).content_digest()
-    _post_json(client, base, {
+    _post_json(approver_client, base, {
         "expected_version": 3,
         "target": "approved",
-        "actor": "ceo",
         "approval": {
-            "approver": "ceo",
             "decision": "approve",
             "occurred_at": "2026-07-23T12:00:00Z",
             "approved_content_digest": digest,
         },
     })
     _post_json(client, base, {
-        "expected_version": 4, "target": "implemented", "actor": "coo"
+        "expected_version": 4, "target": "implemented"
     })
     _post_json(client, base, {
-        "expected_version": 5, "target": "monitoring", "actor": "coo"
+        "expected_version": 5, "target": "monitoring"
     })
 
 
@@ -546,6 +571,38 @@ def _post_json(
     if not isinstance(payload, dict):
         raise DemoError(f"unexpected non-object response from {path}")
     return payload
+
+
+def _post_job_result(
+    client: httpx.Client,
+    path: str,
+    body: dict[str, object],
+    *,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    poll_interval_seconds: float = 0.05,
+) -> dict[str, Any]:
+    response = client.post(path, json=body)
+    _raise_for_status(response)
+    job = JobRead.model_validate(response.json())
+    location = response.headers.get("location", f"/api/v1/jobs/{job.job_id}")
+    deadline = monotonic() + timeout_seconds
+    while job.status not in {"succeeded", "failed", "cancelled"}:
+        if monotonic() >= deadline:
+            raise DemoError(
+                f"job '{job.job_id}' did not complete within "
+                f"{timeout_seconds:g} seconds"
+            )
+        if poll_interval_seconds:
+            sleep(poll_interval_seconds)
+        job = JobRead.model_validate(_get_json(client, location))
+    if job.status != "succeeded" or job.result_location is None:
+        problem = job.problem or {}
+        raise DemoError(
+            f"job '{job.job_id}' failed with "
+            f"{problem.get('code', job.status)}: "
+            f"{problem.get('detail', 'No result was produced.')}"
+        )
+    return _get_json(client, job.result_location)
 
 
 def _get_json(client: httpx.Client, path: str) -> dict[str, Any]:

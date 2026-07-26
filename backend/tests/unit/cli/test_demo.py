@@ -50,7 +50,7 @@ def test_seed_northstar_is_idempotent() -> None:
     assert seed_northstar(session_factory) is False
 
     with session_factory() as session:
-        record = ScenarioRepository(session).get("current-plan")
+        record = ScenarioRepository(session, "default").get("current-plan")
         assert record is not None
         assert record.payload == build_baseline_scenario().model_dump(mode="json")
 
@@ -79,6 +79,12 @@ def test_run_demo_creates_paired_experiments_and_reproducibility_output(
         artifact_directory=tmp_path / "artifacts",
         experiment_workers=1,
         replication_workers_per_experiment=1,
+        job_worker_mode="embedded",
+        job_workers=1,
+        job_poll_interval_seconds=0.01,
+        job_lease_seconds=2,
+        job_heartbeat_seconds=0.25,
+        job_retry_delay_seconds=0,
     )
     app = create_app(settings)
 
@@ -134,12 +140,40 @@ def test_run_autopilot_demo_drives_the_full_loop(tmp_path: Path) -> None:
         artifact_directory=tmp_path / "artifacts",
         experiment_workers=1,
         replication_workers_per_experiment=1,
+        job_worker_mode="embedded",
+        job_workers=1,
+        job_poll_interval_seconds=0.01,
+        job_lease_seconds=2,
+        job_heartbeat_seconds=0.25,
+        job_retry_delay_seconds=0,
         max_optimization_evaluations=120,
     )
-    app = create_app(settings)
+    analyst_app = create_app(
+        settings.model_copy(
+            update={
+                "local_subject": "cfo",
+                "local_roles": ("admin",),
+            }
+        )
+    )
+    approver_app = create_app(
+        settings.model_copy(
+            update={
+                "local_subject": "ceo",
+                "local_roles": ("approver",),
+            }
+        )
+    )
 
-    with TestClient(app) as client:
-        result = run_autopilot_demo(client, seed=731)
+    with (
+        TestClient(analyst_app) as client,
+        TestClient(approver_app) as approver_client,
+    ):
+        result = run_autopilot_demo(
+            client,
+            seed=731,
+            approver_client=approver_client,
+        )
 
     assert result.quality_score == 1.0
     assert result.credibility_band == "decision_grade"

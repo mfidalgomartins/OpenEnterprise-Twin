@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
+from openenterprise_twin.application.identity import AuthenticationMethod, Role
 from openenterprise_twin.domain.scenario import Scenario
 
 ExperimentStatus = Literal["queued", "running", "completed", "failed"]
@@ -90,6 +91,13 @@ class SystemInfo(ApiModel):
     capabilities: tuple[str, ...]
 
 
+class SessionInfo(ApiModel):
+    subject: str
+    tenant_id: str
+    roles: tuple[Role, ...]
+    authentication_method: AuthenticationMethod
+
+
 class HttpRequestMetric(ApiModel):
     method: str
     route: str
@@ -98,6 +106,14 @@ class HttpRequestMetric(ApiModel):
     duration_seconds_total: Annotated[float, Field(ge=0)]
 
 
+class JobQueueMetric(ApiModel):
+    queued: Annotated[int, Field(ge=0)]
+    running: Annotated[int, Field(ge=0)]
+    stale_leases: Annotated[int, Field(ge=0)]
+    oldest_queued_age_seconds: Annotated[float, Field(ge=0)] | None
+
+
 class OperationalMetricsSnapshot(ApiModel):
     uptime_seconds: Annotated[float, Field(ge=0)]
     http_requests: tuple[HttpRequestMetric, ...]
+    job_queue: JobQueueMetric

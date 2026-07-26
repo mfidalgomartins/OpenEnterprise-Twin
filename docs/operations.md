@@ -1,23 +1,25 @@
 # Operator runbook
 
-This runbook is the v0.5 operating contract for a controlled, single-tenant
-OpenEnterprise Twin deployment. Commands assume the repository root unless a
-different directory is shown.
+This runbook is the v0.6 operating contract for OpenEnterprise Twin. Commands
+assume the repository root unless a different directory is shown.
 
 ## Current operating boundary
 
-v0.5 is a single-node operating baseline:
+v0.6 supports an API control plane plus embedded or independently deployed
+durable workers:
 
-- one FastAPI process owns a bounded in-process experiment runner;
-- queued/running experiment state is persisted in PostgreSQL and recovered on
-  process startup, but there is no distributed queue or worker lease;
-- detailed artifacts live in one content-addressed filesystem directory;
-- operational metrics are process-local and reset when the API restarts;
-- one API key represents the deployment, not an end-user identity.
+- OIDC human identity with RBAC and tenant claims, or one explicit
+  tenant-bound API-key service account;
+- PostgreSQL-backed analytical jobs with leases, heartbeat, bounded retries,
+  cancellation and restart recovery;
+- mandatory repository-level tenant isolation;
+- detailed content-addressed artifacts in one filesystem namespace;
+- process-local operational metrics that reset when a process restarts.
 
-Run one API worker against one local artifact directory. Horizontal workers,
-durable distributed jobs, OIDC/RBAC, tenant isolation and object storage are
-later roadmap phases.
+Multiple workers may share PostgreSQL, but they must also share one durable
+artifact namespace. Independent local artifact directories are not a valid
+multi-node deployment. The S3-compatible artifact adapter remains a roadmap
+boundary.
 
 ## Secure configuration
 
@@ -30,25 +32,29 @@ openssl rand -hex 32
 ```
 
 Use the generated value for `POSTGRES_PASSWORD` and the matching password
-segment in `OPENENTERPRISE_TWIN_DATABASE_URL`. Generate a separate API key of
-at least 32 characters for production. Supply production secrets through the
-deployment secret manager; never commit `.env`, print secrets in logs or expose
-the API key to browser code.
+segment in `OPENENTERPRISE_TWIN_DATABASE_URL`. Supply production secrets
+through the deployment secret manager; never commit `.env` or print
+credentials, tokens or database URLs in logs.
 
-Production must set:
+Production with OIDC must set:
 
 ```bash
 OPENENTERPRISE_TWIN_DEPLOYMENT_ENVIRONMENT=production
-OPENENTERPRISE_TWIN_API_KEY=<high-entropy-secret-loaded-from-secret-manager>
+OPENENTERPRISE_TWIN_AUTHENTICATION_MODE=oidc
+OPENENTERPRISE_TWIN_OIDC_ISSUER=https://identity.example/
+OPENENTERPRISE_TWIN_OIDC_AUDIENCE=openenterprise-twin
+OPENENTERPRISE_TWIN_OIDC_JWKS_URL=https://identity.example/.well-known/jwks.json
+OPENENTERPRISE_TWIN_OIDC_ALGORITHMS='["RS256"]'
 OPENENTERPRISE_TWIN_TRUSTED_HOSTS='["twin.example.com"]'
 OPENENTERPRISE_TWIN_DATABASE_URL=<private-postgresql-url>
 OPENENTERPRISE_TWIN_ARTIFACT_DIRECTORY=/var/lib/openenterprise-twin/artifacts
 OPENENTERPRISE_TWIN_BUILD_COMMIT=<lowercase-git-commit>
 ```
 
-The application fails closed if the production API key is shorter than 32
-characters or trusted hosts are absent, wildcarded or left at development
-defaults.
+Configure the public OIDC client and exact `OIDC_CONNECT_SRC` on the frontend as
+described in [identity-and-access.md](identity-and-access.md). Production fails
+closed for local authentication, incomplete/non-HTTPS OIDC, a short API key, or
+trusted hosts that are absent, wildcarded or left at development defaults.
 
 ## Startup order
 
@@ -73,9 +79,11 @@ For a controlled deployment:
 2. Start PostgreSQL and wait for `pg_isready`.
 3. Take a coherent database and artifact backup before an upgrade.
 4. Apply migrations once, before starting the API.
-5. Start exactly one API worker for the local filesystem adapter.
-6. Pass liveness and readiness checks.
-7. Route traffic through the same-origin TLS ingress.
+5. Start the API in `external` worker mode.
+6. Start the required worker count against the same database and artifact
+   namespace.
+7. Pass liveness and readiness checks.
+8. Route traffic through the same-origin TLS ingress.
 
 The migration and API commands are:
 
@@ -93,6 +101,18 @@ exec ../.venv/bin/python -m uvicorn \
 Bind to `0.0.0.0` only inside a private container network. Expose the Nginx/TLS
 edge, not the backend port, to untrusted networks.
 
+Start a durable worker in another process:
+
+```bash
+cd backend
+OPENENTERPRISE_TWIN_JOB_WORKER_MODE=external \
+  exec ../.venv/bin/openenterprise-twin-worker
+```
+
+For a single-process evaluation, set
+`OPENENTERPRISE_TWIN_JOB_WORKER_MODE=embedded`. Worker configuration and
+recovery procedures are in [jobs.md](jobs.md).
+
 ## Migrations
 
 Inspect and apply the migration graph:
@@ -105,7 +125,7 @@ cd backend
 ../.venv/bin/python -m alembic current
 ```
 
-The expected v0.5 head is `0003_decision_loop`. CI validates
+The expected v0.6 head is `0007_experiment_job_links`. CI validates
 `upgrade head → downgrade base → upgrade head` against PostgreSQL. Do not run a
 downgrade while the API is accepting traffic. A one-revision downgrade for a
 tested rollback is:
@@ -116,7 +136,9 @@ cd backend
 ```
 
 Take a backup first and pair schema rollback with a compatible application
-release. v0.5 adds no migration beyond the existing `0003_decision_loop` head.
+release. Migrations `0004`–`0007` introduce tenant ownership, identity-bound
+governance and durable jobs; downgrade only after every v0.6 API and worker is
+stopped.
 
 ## Liveness, readiness and system evidence
 
@@ -152,8 +174,8 @@ A failed dependency returns `503` with the stable RFC 9457 code
 exception. Restart a process that fails liveness. Investigate its dependencies
 when liveness passes but readiness fails.
 
-Build information and metrics require the normal API principal. Load the API
-key into the shell from the secret manager, then run:
+Build information and metrics require an administrator principal. For a
+machine-only deployment, load its API key from the secret manager:
 
 ```bash
 curl --fail --silent --show-error \
@@ -168,6 +190,16 @@ curl --fail --silent --show-error \
 The metrics response contains process uptime and aggregate HTTP count/duration.
 Its only labels are HTTP method, registered route template and status family.
 It contains no key, principal, tenant, scenario, trace identifier or payload.
+
+For OIDC, use a short-lived administrator bearer:
+
+```bash
+curl --fail --silent --show-error \
+  --header "Authorization: Bearer ${OPENENTERPRISE_TWIN_ACCESS_TOKEN}" \
+  http://127.0.0.1:8000/api/v1/system/info
+```
+
+Never place a bearer token in a URL, shell history or committed script.
 
 ## Backup
 
@@ -378,19 +410,22 @@ independently.
 
 ## Graceful shutdown
 
-Send `SIGTERM` and allow the FastAPI lifespan handler to drain bounded work:
+Stop traffic admission, then send `SIGTERM` to API and worker processes:
 
 ```bash
 kill -TERM "${API_PID}"
+kill -TERM "${WORKER_PID}"
 wait "${API_PID}"
+wait "${WORKER_PID}"
 ```
 
-The runner waits up to
-`OPENENTERPRISE_TWIN_EXPERIMENT_SHUTDOWN_TIMEOUT_SECONDS`, cancels work that has
-not started and disposes database connections. Configure the service manager or
-container termination grace period above that timeout. An interrupted
-`running` experiment is recovered to the persisted queue when the next process
-starts; the current adapter does not move execution to another node.
+An embedded API pool and the standalone worker both wait up to
+`OPENENTERPRISE_TWIN_JOB_SHUTDOWN_TIMEOUT_SECONDS` before disposing database
+connections. Configure the service-manager grace period above that value.
+If a handler is forcibly interrupted, its running job retains a lease. A
+replacement worker recovers it after expiry and either retries it or records
+`lease_expired` when attempts are exhausted. The stale process cannot commit
+after another worker owns the lease.
 
 ## Dependency and release audits
 
@@ -448,26 +483,34 @@ business payloads into the incident record.
 5. Retrieve protected `/api/v1/system/info` and
    `/api/v1/system/metrics`. Compare 4xx/5xx families and registered route
    templates; remember that counters reset after restart.
-6. For repeated `401`, `413`, budget `422` or `429` responses, preserve
-   payload-free ingress/audit evidence, confirm rate and size controls, and
-   rotate the API key if exposure is suspected.
-7. If artifact digest validation fails, stop decision publication, preserve the
+6. Inspect tenant-scoped queued/running jobs and worker logs. For rising queue
+   age, stale leases or repeated attempts, follow
+   [the job recovery runbook](jobs.md#backlog-and-recovery-runbook).
+7. For repeated `401`, `403`, `413` or budget `422` responses, preserve
+   payload-free ingress/audit evidence and confirm identity, role, rate and size
+   controls. Rotate the affected API key or identity-provider credentials when
+   exposure is suspected.
+8. If artifact digest validation fails, stop decision publication, preserve the
    database and artifact directory, and restore a verified matching backup.
 
 ## Rollback
 
 Prefer rolling back the immutable application image or release artifact while
-keeping the evidence store intact. v0.5 does not introduce a database revision,
-so an application rollback to v0.4.1 keeps schema head
-`0003_decision_loop`.
+keeping the evidence store intact. v0.6 introduces mandatory tenant ownership,
+identity-bound audit fields and durable-job links. A direct v0.6 → v0.5
+application-only rollback is not compatible with active v0.6 jobs.
 
-1. Remove the instance from traffic and stop the API gracefully.
+1. Remove the instance from traffic and stop every API and worker gracefully.
 2. Preserve logs and take a coherent database/artifact backup.
-3. Deploy the previously verified v0.4.1 image or build artifact.
-4. Do not downgrade PostgreSQL for a v0.5 → v0.4.1 rollback.
-5. Start one worker, pass `/health` and the release-appropriate dependency
-   checks, then restore traffic gradually.
-6. If data integrity is in doubt, restore the matching database and artifact
+3. Confirm there are no active jobs and record all terminal states.
+4. For a same-schema v0.6 patch rollback, deploy the previously verified image
+   without changing database or artifacts.
+5. For rollback across v0.6's migration boundary, restore the pre-upgrade
+   database/artifact backup or execute the rehearsed Alembic downgrade while
+   all processes remain stopped.
+6. Start the compatible API and worker set, pass `/health`, `/ready` and an
+   authenticated job smoke test, then restore traffic gradually.
+7. If data integrity is in doubt, restore the matching database and artifact
    backup instead of replaying writes manually.
 
 Record the failed build commit, rollback release, migration head, backup

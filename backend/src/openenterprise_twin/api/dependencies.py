@@ -1,12 +1,15 @@
 """Application services exposed to FastAPI request dependencies."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from secrets import compare_digest
 from typing import Annotated
 
 from fastapi import Depends, Request, Security
-from fastapi.security import APIKeyHeader
+from fastapi.security import (
+    APIKeyHeader,
+    HTTPAuthorizationCredentials,
+    HTTPBearer,
+)
 from sqlalchemy.orm import Session, sessionmaker
 
 from openenterprise_twin.api.errors import ApiProblemError
@@ -15,37 +18,51 @@ from openenterprise_twin.application.decision_loop import (
     MonitoringService,
     OptimizationLabService,
 )
-from openenterprise_twin.application.experiments import ExperimentRunner
+from openenterprise_twin.application.identity import (
+    AuthenticationError,
+    IdentityProvider,
+    Principal,
+    Role,
+)
 from openenterprise_twin.application.ledger import DecisionLedgerService
 from openenterprise_twin.application.ports import (
     ArtifactReader,
     DecisionEvidenceRepository,
 )
+from openenterprise_twin.infrastructure.repositories import (
+    SqlAlchemyDecisionEvidenceRepository,
+    SqlCalibrationRepository,
+    SqlDatasetRepository,
+    SqlDecisionLedgerRepository,
+    SqlMonitoringRepository,
+    SqlOptimizationRepository,
+)
 from openenterprise_twin.infrastructure.settings import Settings
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+@dataclass(frozen=True, slots=True)
+class AppInfrastructure:
+    session_factory: sessionmaker[Session]
+    artifact_store: ArtifactReader
+    max_experiment_periods: int
+    max_adaptive_periods: int
 
 
 @dataclass(frozen=True, slots=True)
 class AppServices:
+    tenant_id: str
     session_factory: sessionmaker[Session]
     artifact_store: ArtifactReader
     decision_repository: DecisionEvidenceRepository
-    experiment_runner: ExperimentRunner
     calibration_studio: CalibrationStudioService
     optimization_lab: OptimizationLabService
     monitoring: MonitoringService
     decision_ledger: DecisionLedgerService
     max_experiment_periods: int
     max_adaptive_periods: int
-
-
-@dataclass(frozen=True, slots=True)
-class Principal:
-    """Minimal authenticated service identity for the single-tenant release."""
-
-    subject: str
-    authentication_method: str
 
 
 def get_settings(request: Request) -> Settings:
@@ -58,45 +75,147 @@ def get_settings(request: Request) -> Settings:
 def require_principal(
     request: Request,
     supplied_api_key: Annotated[str | None, Security(api_key_header)],
-    settings: Annotated[Settings, Depends(get_settings)],
+    supplied_bearer: Annotated[
+        HTTPAuthorizationCredentials | None,
+        Security(bearer_scheme),
+    ],
 ) -> Principal:
-    """Require the configured deployment key without exposing it to the browser."""
+    """Authenticate the configured deployment mode without exposing credentials."""
 
-    configured_api_key = settings.api_key
-    if configured_api_key is None:
-        principal = Principal(
-            subject="local-operator", authentication_method="local"
+    provider = request.app.state.identity_provider
+    if not isinstance(provider, IdentityProvider):
+        raise RuntimeError("identity provider is not initialized")
+    try:
+        principal = provider.authenticate(
+            api_key=supplied_api_key,
+            bearer_token=(
+                supplied_bearer.credentials
+                if supplied_bearer is not None
+                and supplied_bearer.scheme.lower() == "bearer"
+                else None
+            ),
         )
-        request.state.principal = principal
-        return principal
-    expected = configured_api_key.get_secret_value()
-    if supplied_api_key is None or not compare_digest(supplied_api_key, expected):
+    except AuthenticationError as error:
         raise ApiProblemError(
             status=401,
-            code="authentication_required",
+            code=error.code,
             title="Authentication required",
-            detail="Supply a valid X-API-Key header.",
-        )
-    principal = Principal(
-        subject="enterprise-operator", authentication_method="api_key"
-    )
+            detail=error.detail,
+        ) from error
     request.state.principal = principal
     return principal
 
 
-def get_services(request: Request) -> AppServices:
-    services = request.app.state.services
-    if not isinstance(services, AppServices):
-        raise RuntimeError("application services are not initialized")
-    return services
+PrincipalDependency = Annotated[Principal, Security(require_principal)]
+
+
+def authorize_principal(principal: Principal, *required_roles: Role) -> Principal:
+    """Enforce one explicit role set for an authenticated principal."""
+
+    if not required_roles or not principal.has_any_role(*required_roles):
+        raise ApiProblemError(
+            status=403,
+            code="authorization_denied",
+            title="Operation is not permitted",
+            detail="Your current role does not permit this operation.",
+        )
+    return principal
+
+
+def require_any_role(
+    *required_roles: Role,
+) -> Callable[[Principal], Principal]:
+    """Build a FastAPI dependency for an explicit any-role policy."""
+
+    if not required_roles:
+        raise ValueError("at least one required role is needed")
+
+    def dependency(principal: PrincipalDependency) -> Principal:
+        return authorize_principal(principal, *required_roles)
+
+    dependency.__name__ = "require_" + "_or_".join(required_roles)
+    return dependency
+
+
+reader_guard = require_any_role("viewer", "analyst", "approver", "admin")
+analyst_guard = require_any_role("analyst", "admin")
+admin_guard = require_any_role("admin")
+
+
+def get_infrastructure(request: Request) -> AppInfrastructure:
+    infrastructure = request.app.state.services
+    if not isinstance(infrastructure, AppInfrastructure):
+        raise RuntimeError("application infrastructure is not initialized")
+    return infrastructure
+
+
+def get_services(
+    principal: PrincipalDependency,
+    infrastructure: Annotated[
+        AppInfrastructure,
+        Depends(get_infrastructure),
+    ],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AppServices:
+    dataset_repository = SqlDatasetRepository(
+        infrastructure.session_factory,
+        principal.tenant_id,
+    )
+    calibration_repository = SqlCalibrationRepository(
+        infrastructure.session_factory,
+        principal.tenant_id,
+    )
+    return AppServices(
+        tenant_id=principal.tenant_id,
+        session_factory=infrastructure.session_factory,
+        artifact_store=infrastructure.artifact_store,
+        decision_repository=SqlAlchemyDecisionEvidenceRepository(
+            infrastructure.session_factory,
+            principal.tenant_id,
+        ),
+        calibration_studio=CalibrationStudioService(
+            datasets=dataset_repository,
+            calibrations=calibration_repository,
+            max_observations=settings.max_dataset_observations,
+        ),
+        optimization_lab=OptimizationLabService(
+            optimizations=SqlOptimizationRepository(
+                infrastructure.session_factory,
+                principal.tenant_id,
+            ),
+            max_evaluations=settings.max_optimization_evaluations,
+            max_periods=settings.max_optimization_periods,
+        ),
+        monitoring=MonitoringService(
+            reports=SqlMonitoringRepository(
+                infrastructure.session_factory,
+                principal.tenant_id,
+            )
+        ),
+        decision_ledger=DecisionLedgerService(
+            SqlDecisionLedgerRepository(
+                infrastructure.session_factory,
+                principal.tenant_id,
+            )
+        ),
+        max_experiment_periods=infrastructure.max_experiment_periods,
+        max_adaptive_periods=infrastructure.max_adaptive_periods,
+    )
 
 
 def get_session(
-    services: Annotated[AppServices, Depends(get_services)],
+    infrastructure: Annotated[
+        AppInfrastructure,
+        Depends(get_infrastructure),
+    ],
 ) -> Iterator[Session]:
-    with services.session_factory() as session:
+    with infrastructure.session_factory() as session:
         yield session
 
 
 SettingsDependency = Annotated[Settings, Depends(get_settings)]
 ServicesDependency = Annotated[AppServices, Depends(get_services)]
+InfrastructureDependency = Annotated[
+    AppInfrastructure,
+    Depends(get_infrastructure),
+]

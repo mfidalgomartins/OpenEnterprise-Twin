@@ -39,6 +39,14 @@ DecisionState = Literal[
 Line = Annotated[str, Field(min_length=1, max_length=280)]
 Paragraph = Annotated[str, Field(min_length=1, max_length=4000)]
 Digest = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+AuthenticatedSubject = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@|/-]*$",
+    ),
+]
 
 DECISION_STATES: tuple[DecisionState, ...] = (
     "draft",
@@ -134,7 +142,7 @@ class DecisionContent(DomainModel):
     """The decision rationale captured for governance and audit."""
 
     title: DisplayName
-    owner: Identifier
+    owner: AuthenticatedSubject
     context: Paragraph
     objectives: Annotated[tuple[Line, ...], Field(min_length=1)]
     company_model_version: VersionString
@@ -165,7 +173,7 @@ class DecisionTransition(DomainModel):
 
     from_state: DecisionState | None
     to_state: DecisionState
-    actor: Identifier
+    actor: AuthenticatedSubject
     occurred_at: datetime
     note: Line | None = None
 
@@ -194,7 +202,7 @@ class DecisionTransition(DomainModel):
 class ApprovalRecord(DomainModel):
     """An authenticated approval bound to the exact evidence approved."""
 
-    approver: Identifier
+    approver: AuthenticatedSubject
     decision: Literal["approve", "reject"]
     occurred_at: datetime
     approved_content_digest: Digest
