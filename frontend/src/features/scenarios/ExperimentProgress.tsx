@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link } from "wouter";
 
 import type {
   ExperimentPhase,
@@ -50,7 +50,7 @@ export function ExperimentProgress({
             new revision recalculates.
           </p>
           <Link
-            to={`/scenarios/${encodeURIComponent(lastCompleted.scenarioId)}/compare?experiment=${lastCompleted.experimentId}`}
+            href={`/scenarios/${encodeURIComponent(lastCompleted.scenarioId)}/compare?experiment=${lastCompleted.experimentId}`}
           >
             Open latest decision room
           </Link>

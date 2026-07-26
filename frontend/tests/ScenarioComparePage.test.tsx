@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { Router } from "wouter";
+import { memoryLocation } from "wouter/memory-location";
 
 import { AppRoutes } from "../src/app/routes";
 
@@ -310,19 +311,18 @@ function jsonResponse(payload: unknown) {
 }
 
 function renderDecisionRoom() {
+  const location = memoryLocation({
+    path: "/scenarios/resilient-margin/compare?experiment=experiment-42",
+  });
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter
-        initialEntries={[
-          "/scenarios/resilient-margin/compare?experiment=experiment-42",
-        ]}
-      >
+      <Router hook={location.hook}>
         <AppRoutes />
-      </MemoryRouter>
+      </Router>
     </QueryClientProvider>,
   );
 }

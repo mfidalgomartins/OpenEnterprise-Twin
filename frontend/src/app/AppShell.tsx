@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PropsWithChildren } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, useLocation } from "wouter";
 
 import { BrandMark } from "../components/BrandMark";
 import { getCompanyReference } from "../features/scenarios/api";
@@ -63,8 +63,9 @@ function ModelContext() {
 }
 
 export function AppShell({ children }: PropsWithChildren) {
-  const location = useLocation();
+  const [location] = useLocation();
   const mainRef = useRef<HTMLElement>(null);
+  const pathname = location;
 
   useEffect(() => {
     const titleByPath: Record<string, string> = {
@@ -80,15 +81,15 @@ export function AppShell({ children }: PropsWithChildren) {
       "/monitoring": "Monitoring center",
     };
     const title =
-      titleByPath[location.pathname] ??
-      (location.pathname.startsWith("/reports/")
+      titleByPath[pathname] ??
+      (pathname.startsWith("/reports/")
         ? "Executive brief"
-        : location.pathname.includes("/compare")
+        : pathname.includes("/compare")
           ? "Decision room"
           : "OpenEnterprise Twin");
     document.title = `${title} · OpenEnterprise Twin`;
     mainRef.current?.focus({ preventScroll: true });
-  }, [location.pathname]);
+  }, [pathname]);
 
   return (
     <div className="app-shell">
@@ -100,19 +101,24 @@ export function AppShell({ children }: PropsWithChildren) {
           <BrandMark />
           <nav aria-label="Primary navigation" className="primary-nav">
             <ul className="primary-nav__list">
-              {destinations.map(({ label, to }) => (
-                <li key={to} className="primary-nav__item">
-                  <NavLink
-                    className={({ isActive }) =>
-                      `primary-nav__link${isActive ? " primary-nav__link--active" : ""}`
-                    }
-                    end={to === "/"}
-                    to={to}
-                  >
-                    {label}
-                  </NavLink>
-                </li>
-              ))}
+              {destinations.map(({ label, to }) => {
+                const isActive =
+                  to === "/"
+                    ? pathname === "/"
+                    : pathname === to || pathname.startsWith(`${to}/`);
+
+                return (
+                  <li key={to} className="primary-nav__item">
+                    <Link
+                      aria-current={isActive ? "page" : undefined}
+                      className={`primary-nav__link${isActive ? " primary-nav__link--active" : ""}`}
+                      href={to}
+                    >
+                      {label}
+                    </Link>
+                  </li>
+                );
+              })}
             </ul>
           </nav>
           <ModelContext />
@@ -124,7 +130,7 @@ export function AppShell({ children }: PropsWithChildren) {
         ref={mainRef}
         tabIndex={-1}
       >
-        {children ?? <Outlet />}
+        {children}
       </main>
     </div>
   );

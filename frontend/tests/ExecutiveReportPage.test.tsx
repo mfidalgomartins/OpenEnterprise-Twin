@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { Router } from "wouter";
+import { memoryLocation } from "wouter/memory-location";
 
 import { AppRoutes } from "../src/app/routes";
 
@@ -231,14 +232,15 @@ function jsonResponse(payload: unknown) {
 }
 
 function renderReport() {
+  const location = memoryLocation({ path: "/reports/42" });
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={["/reports/42"]}>
+      <Router hook={location.hook}>
         <AppRoutes />
-      </MemoryRouter>
+      </Router>
     </QueryClientProvider>,
   );
 }

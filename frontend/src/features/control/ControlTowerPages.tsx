@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link } from "wouter";
 
 import { formatDate, formatPercent } from "../../lib/format";
 import {
@@ -124,7 +124,7 @@ function DecisionCard({ decision }: { decision: DecisionSummary }) {
       </dl>
       <Link
         className="control-link"
-        to={`/scenarios/${encodeURIComponent(decision.scenario_id)}/compare?experiment=${decision.experiment_id}`}
+        href={`/scenarios/${encodeURIComponent(decision.scenario_id)}/compare?experiment=${decision.experiment_id}`}
       >
         Open decision room
       </Link>
@@ -183,7 +183,7 @@ export function BriefingPage() {
               <p>Review queue</p>
               <h2 id="queue-title">Latest decisions</h2>
             </div>
-            <Link className="control-link" to="/decisions">
+            <Link className="control-link" href="/decisions">
               View portfolio
             </Link>
           </div>
@@ -197,7 +197,7 @@ export function BriefingPage() {
             <div className="control-empty">
               <h3>No candidate evidence yet</h3>
               <p>Run a paired scenario to create the first governed decision.</p>
-              <Link className="control-link" to="/scenarios">
+              <Link className="control-link" href="/scenarios">
                 Create scenario
               </Link>
             </div>
@@ -322,7 +322,7 @@ export function TwinPage() {
           </ul>
         </section>
       </div>
-      <Link className="control-link control-link--primary" to="/scenarios">
+      <Link className="control-link control-link--primary" href="/scenarios">
         Stress the operating model
       </Link>
     </div>
@@ -386,7 +386,7 @@ export function DecisionsPage() {
             <p>{decisions.length} recent completed candidates</p>
             <h2 id="portfolio-title">Recommendation register</h2>
           </div>
-          <Link className="control-link" to="/scenarios">Create variant</Link>
+          <Link className="control-link" href="/scenarios">Create variant</Link>
         </div>
         {decisions.length ? (
           <div className="decision-card-list decision-card-list--three">
@@ -398,7 +398,7 @@ export function DecisionsPage() {
           <div className="control-empty">
             <h3>No recommendations recorded</h3>
             <p>Run a paired policy experiment to populate the register.</p>
-            <Link className="control-link" to="/scenarios">Create scenario</Link>
+            <Link className="control-link" href="/scenarios">Create scenario</Link>
           </div>
         )}
       </section>
@@ -449,7 +449,7 @@ export function ReportsPage() {
                   <dd><code>{decision.brief_digest.slice(0, 12)}</code></dd>
                 </div>
               </dl>
-              <Link className="control-link" to={`/reports/${decision.experiment_id}`}>
+              <Link className="control-link" href={`/reports/${decision.experiment_id}`}>
                 Open brief
               </Link>
             </article>
@@ -459,7 +459,7 @@ export function ReportsPage() {
           <div className="control-empty">
             <h2>No published decision briefs</h2>
             <p>Decision briefs appear after a candidate experiment completes.</p>
-            <Link className="control-link" to="/scenarios">Run first comparison</Link>
+            <Link className="control-link" href="/scenarios">Run first comparison</Link>
           </div>
         )}
       </section>
@@ -473,7 +473,7 @@ export function NotFoundPage() {
       <p className="control-header__eyebrow">404</p>
       <h1>Workspace not found</h1>
       <p>The requested route is not part of this decision workspace.</p>
-      <Link className="control-link" to="/">
+      <Link className="control-link" href="/">
         Return to briefing
       </Link>
     </section>

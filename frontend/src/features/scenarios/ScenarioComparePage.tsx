@@ -1,4 +1,4 @@
-import { useParams, useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "wouter";
 
 import { ApiError } from "../../lib/api";
 
@@ -42,7 +42,7 @@ function RecalculationStatus({
 }
 
 export function ScenarioComparePage() {
-  const { scenarioId = "" } = useParams();
+  const { scenarioId = "" } = useParams<{ scenarioId?: string }>();
   const [searchParams] = useSearchParams();
   const experimentId = searchParams.get("experiment")?.trim() ?? "";
   const { comparison, error, isFetching, isPending, report, retry } =

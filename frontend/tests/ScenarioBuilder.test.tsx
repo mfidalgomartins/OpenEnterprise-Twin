@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { Router } from "wouter";
+import { memoryLocation } from "wouter/memory-location";
 
 import { ScenarioBuilder } from "../src/features/scenarios/ScenarioBuilder";
 import {
@@ -161,14 +162,15 @@ function successfulExperimentFetch() {
 }
 
 function renderBuilder() {
+  const location = memoryLocation();
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
+      <Router hook={location.hook}>
         <ScenarioBuilder />
-      </MemoryRouter>
+      </Router>
     </QueryClientProvider>,
   );
 }

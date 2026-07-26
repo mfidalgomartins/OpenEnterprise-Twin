@@ -1,6 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { Router, useLocation } from "wouter";
+import { memoryLocation } from "wouter/memory-location";
 
 import { AppShell } from "../src/app/AppShell";
 
@@ -13,19 +14,21 @@ const destinations = [
 ];
 
 function CurrentLocation() {
-  const location = useLocation();
+  const [location] = useLocation();
 
-  return <span data-testid="location">{location.pathname}</span>;
+  return <span data-testid="location">{location}</span>;
 }
 
 function renderShell(initialEntry = "/") {
+  const location = memoryLocation({ path: initialEntry });
+
   return render(
-    <MemoryRouter initialEntries={[initialEntry]}>
+    <Router hook={location.hook}>
       <AppShell>
         <h1>Decision content</h1>
         <CurrentLocation />
       </AppShell>
-    </MemoryRouter>,
+    </Router>,
   );
 }
 
