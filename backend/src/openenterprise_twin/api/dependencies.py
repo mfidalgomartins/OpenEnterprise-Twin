@@ -1,6 +1,6 @@
 """Application services exposed to FastAPI request dependencies."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -23,6 +23,7 @@ from openenterprise_twin.application.identity import (
     AuthenticationError,
     IdentityProvider,
     Principal,
+    Role,
 )
 from openenterprise_twin.application.ledger import DecisionLedgerService
 from openenterprise_twin.application.ports import (
@@ -88,6 +89,42 @@ def require_principal(
         ) from error
     request.state.principal = principal
     return principal
+
+
+PrincipalDependency = Annotated[Principal, Security(require_principal)]
+
+
+def authorize_principal(principal: Principal, *required_roles: Role) -> Principal:
+    """Enforce one explicit role set for an authenticated principal."""
+
+    if not required_roles or not principal.has_any_role(*required_roles):
+        raise ApiProblemError(
+            status=403,
+            code="authorization_denied",
+            title="Operation is not permitted",
+            detail="Your current role does not permit this operation.",
+        )
+    return principal
+
+
+def require_any_role(
+    *required_roles: Role,
+) -> Callable[[Principal], Principal]:
+    """Build a FastAPI dependency for an explicit any-role policy."""
+
+    if not required_roles:
+        raise ValueError("at least one required role is needed")
+
+    def dependency(principal: PrincipalDependency) -> Principal:
+        return authorize_principal(principal, *required_roles)
+
+    dependency.__name__ = "require_" + "_or_".join(required_roles)
+    return dependency
+
+
+reader_guard = require_any_role("viewer", "analyst", "approver", "admin")
+analyst_guard = require_any_role("analyst", "admin")
+admin_guard = require_any_role("admin")
 
 
 def get_services(request: Request) -> AppServices:

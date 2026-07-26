@@ -46,8 +46,11 @@ from openenterprise_twin.analytics.quality import DataQualityReport
 from openenterprise_twin.analytics.synthetic import generate_northstar_history
 from openenterprise_twin.api.dependencies import (
     AppServices,
+    PrincipalDependency,
+    analyst_guard,
+    authorize_principal,
     get_services,
-    require_principal,
+    reader_guard,
 )
 from openenterprise_twin.api.errors import ApiProblemError
 from openenterprise_twin.application.decision_loop import (
@@ -72,7 +75,7 @@ from openenterprise_twin.simulation.reference import (
 
 decision_loop_router = APIRouter(
     prefix="/api/v1",
-    dependencies=[Security(require_principal)],
+    dependencies=[Security(reader_guard)],
 )
 ServicesDependency = Annotated[AppServices, Depends(get_services)]
 
@@ -131,6 +134,7 @@ class CalibrationResponse(LoopModel):
     "/datasets",
     response_model=DatasetIngestResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Security(analyst_guard)],
 )
 def ingest_dataset(
     request: DatasetIngestRequest,
@@ -150,6 +154,7 @@ def ingest_dataset(
     "/datasets/synthetic",
     response_model=DatasetIngestResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Security(analyst_guard)],
 )
 def ingest_synthetic_dataset(
     request: SyntheticDatasetRequest,
@@ -175,6 +180,7 @@ def ingest_synthetic_dataset(
     "/datasets/csv",
     response_model=DatasetIngestResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Security(analyst_guard)],
 )
 async def ingest_dataset_csv(
     request: Request,
@@ -262,6 +268,7 @@ def _ingest(services: AppServices, dataset: HistoricalDataset) -> StoredDataset:
     "/calibrations",
     response_model=CalibrationResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Security(analyst_guard)],
 )
 def create_calibration(
     request: CalibrationRequest,
@@ -307,6 +314,7 @@ class OptimizationResponse(LoopModel):
     "/optimizations",
     response_model=OptimizationResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Security(analyst_guard)],
 )
 def create_optimization(
     request: OptimizationRequest,
@@ -342,7 +350,10 @@ class AdaptiveCompareRequest(LoopModel):
     master_seed: int = Field(default=20240115, ge=0)
 
 
-@decision_loop_router.post("/adaptive-policies/validate")
+@decision_loop_router.post(
+    "/adaptive-policies/validate",
+    dependencies=[Security(analyst_guard)],
+)
 def validate_adaptive_policy(policy: AdaptivePolicy) -> dict[str, str]:
     # Contradiction and schema validation happen while parsing the body.
     return {"policy_id": policy.policy_id, "status": "valid"}
@@ -351,6 +362,7 @@ def validate_adaptive_policy(policy: AdaptivePolicy) -> dict[str, str]:
 @decision_loop_router.post(
     "/adaptive-policies/compare",
     response_model=AdaptiveComparison,
+    dependencies=[Security(analyst_guard)],
 )
 def compare_adaptive_policy(
     request: AdaptiveCompareRequest,
@@ -408,6 +420,7 @@ class DecisionSnapshotResponse(LoopModel):
     "/ledger/decisions",
     response_model=DecisionSnapshotResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Security(analyst_guard)],
 )
 def create_decision(
     request: DecisionCreateRequest,
@@ -455,7 +468,12 @@ def transition_decision(
     decision_id: str,
     request: DecisionTransitionRequest,
     services: ServicesDependency,
+    principal: PrincipalDependency,
 ) -> DecisionSnapshotResponse:
+    if request.target == "approved":
+        authorize_principal(principal, "approver", "admin")
+    else:
+        authorize_principal(principal, "analyst", "admin")
     snapshot = services.decision_ledger.transition(
         decision_id=decision_id,
         expected_version=request.expected_version,
@@ -496,6 +514,7 @@ class OutcomeRequest(LoopModel):
     "/ledger/decisions/{decision_id}/outcomes",
     response_model=MonitoringReport,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Security(analyst_guard)],
 )
 def record_outcomes(
     decision_id: str,

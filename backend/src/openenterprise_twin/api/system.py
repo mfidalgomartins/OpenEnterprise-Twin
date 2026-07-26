@@ -13,7 +13,7 @@ from openenterprise_twin import __version__
 from openenterprise_twin.api.dependencies import (
     ServicesDependency,
     SettingsDependency,
-    require_principal,
+    admin_guard,
 )
 from openenterprise_twin.api.errors import ApiProblemError
 from openenterprise_twin.api.observability import OperationalMetrics
@@ -27,7 +27,7 @@ from openenterprise_twin.api.schemas import (
 public_system_router = APIRouter()
 system_router = APIRouter(
     prefix="/api/v1",
-    dependencies=[Security(require_principal)],
+    dependencies=[Security(admin_guard)],
 )
 
 _CAPABILITIES = (

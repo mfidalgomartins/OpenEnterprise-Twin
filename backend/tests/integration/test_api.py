@@ -523,6 +523,7 @@ def test_cors_allows_only_explicitly_configured_development_origin(
     assert allowed.headers["access-control-allow-origin"] == (
         "http://127.0.0.1:5173"
     )
+    assert "authorization" in allowed.headers["access-control-allow-headers"].lower()
     assert "access-control-allow-origin" not in denied.headers
 
 

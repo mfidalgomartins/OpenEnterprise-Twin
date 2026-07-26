@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
+from openenterprise_twin.application.identity import AuthenticationMethod, Role
 from openenterprise_twin.domain.scenario import Scenario
 
 ExperimentStatus = Literal["queued", "running", "completed", "failed"]
@@ -88,6 +89,13 @@ class SystemInfo(ApiModel):
     environment: Literal["development", "test", "production"]
     build_commit: str | None
     capabilities: tuple[str, ...]
+
+
+class SessionInfo(ApiModel):
+    subject: str
+    tenant_id: str
+    roles: tuple[Role, ...]
+    authentication_method: AuthenticationMethod
 
 
 class HttpRequestMetric(ApiModel):

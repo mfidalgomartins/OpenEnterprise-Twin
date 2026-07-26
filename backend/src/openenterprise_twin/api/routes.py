@@ -7,15 +7,18 @@ from sqlalchemy.orm import Session
 
 from openenterprise_twin.api.dependencies import (
     AppServices,
+    PrincipalDependency,
+    analyst_guard,
     get_services,
     get_session,
-    require_principal,
+    reader_guard,
 )
 from openenterprise_twin.api.errors import ApiProblemError
 from openenterprise_twin.api.schemas import (
     ExperimentCreate,
     ExperimentRead,
     ScenarioRead,
+    SessionInfo,
 )
 from openenterprise_twin.application.decisions import (
     DecisionEvidenceError,
@@ -50,7 +53,7 @@ from openenterprise_twin.simulation.reference import (
 public_router = APIRouter()
 router = APIRouter(
     prefix="/api/v1",
-    dependencies=[Security(require_principal)],
+    dependencies=[Security(reader_guard)],
 )
 SessionDependency = Annotated[Session, Depends(get_session)]
 ServicesDependency = Annotated[AppServices, Depends(get_services)]
@@ -64,6 +67,7 @@ IdempotencyKey = Annotated[
     "/scenarios",
     response_model=ScenarioRead,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Security(analyst_guard)],
 )
 def create_scenario(
     scenario: Scenario,
@@ -104,6 +108,16 @@ def get_company() -> CompanyModel:
     return build_northstar_company()
 
 
+@router.get("/session", response_model=SessionInfo)
+def get_session_info(principal: PrincipalDependency) -> SessionInfo:
+    return SessionInfo(
+        subject=principal.subject,
+        tenant_id=principal.tenant_id,
+        roles=tuple(sorted(principal.roles)),
+        authentication_method=principal.authentication_method,
+    )
+
+
 @router.get("/baseline", response_model=ScenarioRead)
 def get_baseline() -> ScenarioRead:
     return _scenario_read(build_baseline_scenario())
@@ -134,6 +148,7 @@ def get_scenario(scenario_id: str, session: SessionDependency) -> ScenarioRead:
     "/scenarios/{scenario_id}/experiments",
     response_model=ExperimentRead,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Security(analyst_guard)],
 )
 def create_experiment(
     scenario_id: str,
