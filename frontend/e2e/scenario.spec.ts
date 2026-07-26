@@ -1,13 +1,15 @@
 import { expect, test } from "@playwright/test";
 
+import { authenticate } from "./support/auth";
+
 test("keeps the model context legible at the mobile breakpoint", async ({
   page,
 }) => {
   await page.setViewportSize({ height: 844, width: 390 });
-  await page.goto("/");
+  await authenticate(page);
 
   const contextItems = page.locator(".model-context__item");
-  await expect(contextItems).toHaveCount(3);
+  await expect(contextItems).toHaveCount(5);
 
   const itemWidths = await contextItems.evaluateAll((items) =>
     items.map((item) => item.getBoundingClientRect().width),
@@ -31,7 +33,7 @@ test("keeps the model context legible at the mobile breakpoint", async ({
 });
 
 test("keeps a visible focus indicator on the main destination", async ({ page }) => {
-  await page.goto("/");
+  await authenticate(page);
 
   const main = page.locator("#main-content");
   await main.focus();
@@ -56,7 +58,7 @@ test("runs a policy experiment through the live API and publishes its brief", as
     "Set LIVE_E2E=1 when the backend release stack is available.",
   );
 
-  await page.goto("/scenarios");
+  await authenticate(page, "/scenarios");
   await expect(
     page.getByRole("heading", { level: 1, name: "Policy studio" }),
   ).toBeVisible();

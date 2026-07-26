@@ -16,6 +16,7 @@ DEV_HOST ?= 127.0.0.1
 API_PORT ?= 8000
 FRONTEND_PORT ?= 5173
 E2E_API_PORT ?= 18000
+E2E_OIDC_PORT ?= 18081
 DEMO_SEED ?= 731
 DEMO_REPLICATIONS ?= 100
 DEMO_TIMEOUT_SECONDS ?= 600
@@ -152,20 +153,43 @@ docker-build: ## Build the production backend and frontend container images.
 e2e: install ## Run Playwright, including an isolated full-stack browser flow.
 	@set -euo pipefail; \
 	tmp_dir=$$(mktemp -d); \
+	OIDC_FIXTURE_PORT=$(E2E_OIDC_PORT) \
+	OIDC_ALLOWED_ORIGIN='http://127.0.0.1:4173' \
+		$(PYTHON) backend/tests/fixtures/oidc_server.py \
+		>"$$tmp_dir/oidc.log" 2>&1 & oidc_pid=$$!; \
 	OPENENTERPRISE_TWIN_DATABASE_URL="sqlite+pysqlite:///$$tmp_dir/e2e.db" \
 	OPENENTERPRISE_TWIN_ARTIFACT_DIRECTORY="$$tmp_dir/artifacts" \
+	OPENENTERPRISE_TWIN_DEPLOYMENT_ENVIRONMENT=test \
+	OPENENTERPRISE_TWIN_AUTHENTICATION_MODE=oidc \
+	OPENENTERPRISE_TWIN_OIDC_ISSUER="http://127.0.0.1:$(E2E_OIDC_PORT)/" \
+	OPENENTERPRISE_TWIN_OIDC_AUDIENCE=openenterprise-twin \
+	OPENENTERPRISE_TWIN_OIDC_JWKS_URL="http://127.0.0.1:$(E2E_OIDC_PORT)/jwks" \
 	OPENENTERPRISE_TWIN_EXPERIMENT_WORKERS=1 \
 	OPENENTERPRISE_TWIN_REPLICATION_WORKERS_PER_EXPERIMENT=1 \
+	OPENENTERPRISE_TWIN_JOB_WORKER_MODE=embedded \
+	OPENENTERPRISE_TWIN_JOB_WORKERS=1 \
 	OPENENTERPRISE_TWIN_CORS_ALLOWED_ORIGINS='["http://127.0.0.1:4173"]' \
 		$(PYTHON) -m uvicorn openenterprise_twin.api.app:create_app \
 		--factory --host 127.0.0.1 --port $(E2E_API_PORT) \
 		>"$$tmp_dir/api.log" 2>&1 & api_pid=$$!; \
-	cleanup() { kill $$api_pid 2>/dev/null || true; rm -rf "$$tmp_dir"; }; \
+	cleanup() { kill $$api_pid $$oidc_pid 2>/dev/null || true; rm -rf "$$tmp_dir"; }; \
 	trap cleanup EXIT; \
 	for attempt in $$(seq 1 30); do \
-		if ! kill -0 $$api_pid 2>/dev/null; then cat "$$tmp_dir/api.log"; exit 1; fi; \
-		if $(PYTHON) -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$(E2E_API_PORT)/health', timeout=2)" >/dev/null 2>&1; then break; fi; \
-		if [ "$$attempt" = 30 ]; then cat "$$tmp_dir/api.log"; exit 1; fi; \
+		if ! kill -0 $$api_pid 2>/dev/null || ! kill -0 $$oidc_pid 2>/dev/null; then \
+			cat "$$tmp_dir/api.log" "$$tmp_dir/oidc.log"; exit 1; \
+		fi; \
+		if $(PYTHON) -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$(E2E_API_PORT)/health', timeout=2); urllib.request.urlopen('http://127.0.0.1:$(E2E_OIDC_PORT)/.well-known/openid-configuration', timeout=2)" >/dev/null 2>&1; then break; fi; \
+		if [ "$$attempt" = 30 ]; then cat "$$tmp_dir/api.log" "$$tmp_dir/oidc.log"; exit 1; fi; \
 		sleep 1; \
 	done; \
-	cd frontend && LIVE_E2E=1 VITE_API_BASE_URL='http://127.0.0.1:$(E2E_API_PORT)' npm run e2e
+	cd frontend && \
+		LIVE_E2E=1 \
+		OIDC_E2E=1 \
+		VITE_API_BASE_URL='http://127.0.0.1:$(E2E_API_PORT)' \
+		VITE_AUTH_MODE=oidc \
+		VITE_OIDC_AUTHORITY='http://127.0.0.1:$(E2E_OIDC_PORT)/' \
+		VITE_OIDC_CLIENT_ID=openenterprise-twin-browser \
+		VITE_OIDC_REDIRECT_URI='http://127.0.0.1:4173/auth/callback' \
+		VITE_OIDC_POST_LOGOUT_REDIRECT_URI='http://127.0.0.1:4173/' \
+		VITE_OIDC_SCOPE='openid profile' \
+		npm run e2e
