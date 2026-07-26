@@ -2,23 +2,30 @@
 
 # OpenEnterprise Twin
 
-**A governed Monte Carlo decision twin for commercial, operational and liquidity policy.**
+**Decision intelligence that connects policy, operations and liquidity—and
+keeps the evidence required to defend the decision.**
 
 [![CI](https://github.com/mfidalgomartins/OpenEnterprise-Twin/actions/workflows/ci.yml/badge.svg)](https://github.com/mfidalgomartins/OpenEnterprise-Twin/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-0.5.0-6F42C1)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](backend/pyproject.toml)
 [![React](https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white)](frontend/package.json)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)](docker-compose.yml)
 [![License](https://img.shields.io/badge/License-Apache--2.0-2E7D32)](LICENSE)
 
-[Run the flagship demo](#run-it-locally) · [Inspect the decision model](docs/model.md) · [Explore the architecture](docs/architecture.md) · [Read the threat model](docs/OpenEnterprise-Twin-threat-model.md)
+[Run flagship demo](#run-the-flagship-demo) ·
+[Inspect architecture](docs/architecture.md) ·
+[Review security posture](docs/OpenEnterprise-Twin-threat-model.md) ·
+[Explore API](docs/architecture.md#api-surface) ·
+[See enterprise roadmap](docs/superpowers/specs/2026-07-26-enterprise-grade-roadmap-design.md)
 
 </div>
 
-> **Policy → paired simulation → evidence gate → Pareto frontier → immutable executive brief.**
+> **Policy → paired simulation → evidence gate → governed action → monitored
+> outcome.**
 
 ![OpenEnterprise Twin control tower](docs/assets/decision-room.png)
 
-## The product
+## From operating policy to defensible action
 
 OpenEnterprise Twin models a company as one connected operating and financial system. A policy can change pricing, commercial investment, finite capacity, sourcing, safety stock, payment terms or capital deployment. The twin then runs baseline and candidate against the same stochastic shock tapes and evaluates value, service and liquidity together.
 
@@ -45,9 +52,15 @@ Northstar Components is the included synthetic B2B manufacturing reference model
 | Generates a recommendation | Proves every recommendation against typed evidence |
 | Treats provenance as metadata | Makes provenance part of the immutable result |
 
-## v0.3 — the Governed Decision Autopilot
+## v0.5 — secure, observable operating baseline
 
-v0.3 turns the twin from a scenario simulator into an **operational decision system** that closes the loop: it learns the twin from history, discovers optimal policy, governs the decision, watches the real outcome, and detects when it must recalibrate.
+v0.5 makes the decision loop operationally inspectable. The release separates
+dependency-free liveness from database and artifact readiness, exposes
+authenticated build information and bounded process metrics, adds API security
+headers, and documents backup, recovery and rollback. The analytical loop
+remains the differentiator: it learns the twin from history, discovers candidate
+policy, governs the decision, watches the realised outcome and detects when it
+must recalibrate.
 
 ```mermaid
 flowchart LR
@@ -75,9 +88,9 @@ make demo-autopilot
 
 It ingests synthetic Northstar history, calibrates and scores credibility, runs the optimizer, governs a decision to approval, records outcomes and prints the monitoring verdict — every step content-addressed. Explore it in the UI under **Calibration → Optimization → Adaptive → Ledger → Monitoring**.
 
-[Closed-loop analytics and API →](docs/architecture.md)
+[Inspect the complete system contract →](docs/architecture.md)
 
-## Run it locally
+## Run the flagship demo
 
 Prerequisites: Docker with Compose, Python 3.12, Node.js 22+ and Make.
 
@@ -120,7 +133,8 @@ flowchart LR
 
 The Python backend is a modular monolith. Import contracts keep the domain, simulation and plugin SDK independent of delivery infrastructure. A bounded runner owns asynchronous experiment lifecycle; PostgreSQL stores lifecycle and compact evidence; detailed traces are canonical gzip JSON artifacts.
 
-[Architecture and API contracts →](docs/architecture.md)
+[Architecture and API contracts →](docs/architecture.md) ·
+[Operator runbook →](docs/operations.md)
 
 ## Model credibility
 
@@ -135,11 +149,28 @@ The Python backend is a modular monolith. Import contracts keep the domain, simu
 
 ## Security posture
 
-Production mode requires an API key, disables interactive API documentation, validates host headers, limits request bodies and caps simulation work. The supplied Nginx edge keeps the key server-side, applies a strict content security policy and proxies browser requests same-origin. PostgreSQL binds to loopback in the local Compose profile and requires an operator-supplied password.
+Production mode requires an API key, disables interactive API documentation,
+validates host headers, limits request bodies and caps simulation work. Every
+API response carries a no-store security-header baseline. Public `/health` is
+liveness-only; `/ready` verifies PostgreSQL and writable artifact storage.
+Build metadata and process-local bounded metrics remain protected. The supplied
+Nginx edge keeps the key server-side, applies a strict content security policy
+and proxies browser requests same-origin. PostgreSQL binds to loopback in the
+local Compose profile and requires an operator-supplied password.
 
 This is a single-tenant reference release, not a multi-tenant identity platform. OIDC/RBAC, distributed workers and an object-store artifact adapter remain deployment extensions.
 
 [Trust boundaries, abuse cases and mitigations →](docs/OpenEnterprise-Twin-threat-model.md)
+
+## Enterprise roadmap
+
+The repository deliberately separates implemented capability from the next
+scale boundaries. v0.5 is a secure single-tenant, single-node operating
+baseline. OIDC and role policy, tenant isolation, durable distributed jobs,
+allow-listed enterprise connectors and object storage are sequenced as later
+phases with explicit acceptance evidence.
+
+[See the evidence-backed delivery programme →](docs/superpowers/specs/2026-07-26-enterprise-grade-roadmap-design.md)
 
 ## Repository map
 

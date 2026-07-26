@@ -4,6 +4,36 @@ All notable changes to OpenEnterprise Twin are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-07-26
+
+### Added
+
+- Distinct public `/health` liveness and `/ready` dependency-readiness
+  contracts, with safe RFC 9457 failure responses.
+- Protected `/api/v1/system/info` release metadata and
+  `/api/v1/system/metrics` bounded process metrics.
+- An operator runbook covering startup, migrations, probes, coherent
+  database/artifact backup and restore, graceful shutdown, dependency audits,
+  incident triage and rollback.
+
+### Changed
+
+- Replaced the frontend router with `wouter` while preserving the public route
+  contract and locked reproducible build.
+- Aligned backend, frontend and public release metadata at `0.5.0`.
+- Refreshed the public architecture, security posture and evidence-backed
+  enterprise roadmap without claiming later identity or distributed-storage
+  phases.
+
+### Security
+
+- Removed known high-severity findings from the locked frontend dependency
+  graph.
+- Added no-store, anti-sniffing, anti-framing, no-referrer and restrictive
+  browser-permission headers to API responses.
+- Kept operational labels bounded to method, registered route template and
+  status family, with unknown paths collapsed to `unmatched`.
+
 ## [0.4.1] - 2026-07-23
 
 ### Added
@@ -74,6 +104,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   executive briefs.
 
 [0.4.0]: https://github.com/mfidalgomartins/OpenEnterprise-Twin/releases/tag/v0.4.0
+[0.5.0]: https://github.com/mfidalgomartins/OpenEnterprise-Twin/releases/tag/v0.5.0
 [0.3.2]: https://github.com/mfidalgomartins/OpenEnterprise-Twin/releases/tag/v0.3.2
 [0.3.1]: https://github.com/mfidalgomartins/OpenEnterprise-Twin/releases/tag/v0.3.1
 [0.3.0]: https://github.com/mfidalgomartins/OpenEnterprise-Twin/releases/tag/v0.3.0
