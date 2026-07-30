@@ -1,5 +1,11 @@
 import { type ChangeEvent, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+
+import { Link } from "wouter";
 
 import { ApiError } from "../../lib/api";
 import { useAuth } from "../auth/authContext";
@@ -16,19 +22,23 @@ import {
 } from "./components";
 import {
   compareAdaptivePolicy,
+  createLedgerDecision,
   downloadDatasetCsv,
   getLedgerDecision,
   getMonitoring,
   ingestCsvDataset,
   ingestSyntheticDataset,
   listLedgerDecisions,
+  recordOutcomes,
   runCalibration,
   runOptimization,
+  transitionLedgerDecision,
 } from "./api";
 import type {
   AdaptiveComparison,
   CalibrationResponse,
   DatasetIngestResponse,
+  DecisionSnapshot,
   DecisionState,
   MonitoringReport,
   OptimizationResponse,
@@ -689,13 +699,37 @@ export function DecisionLedgerPage() {
     queryFn: () => getLedgerDecision(selected as string),
     enabled: selected !== null,
   });
+  const [drafting, setDrafting] = useState(false);
+  const queryClient = useQueryClient();
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ["ledger-decisions"] });
+    void queryClient.invalidateQueries({ queryKey: ["ledger-decision"] });
+  };
 
   return (
     <div className="ap-layout ap-layout--split">
       <Panel
         title="Decision Ledger"
         description="Every governed decision, its state and its append-only audit trail."
+        actions={
+          <button
+            type="button"
+            className="ap-button ap-button--primary"
+            onClick={() => setDrafting((open) => !open)}
+          >
+            {drafting ? "Close" : "New decision"}
+          </button>
+        }
       >
+        {drafting ? (
+          <NewDecisionForm
+            onCreated={(decisionId) => {
+              setDrafting(false);
+              setSelected(decisionId);
+              refresh();
+            }}
+          />
+        ) : null}
         {decisions.isPending ? (
           <StateBanner kind="loading" title="Loading decisions" />
         ) : decisions.isError ? (
@@ -760,6 +794,7 @@ export function DecisionLedgerPage() {
               <Stat label="Owner" value={detail.data.owner} />
               <Stat label="Approvals" value={String(detail.data.approvals.length)} />
             </dl>
+            <GovernedActions snapshot={detail.data} onDone={refresh} />
             <ol className="ap-timeline">
               {detail.data.transitions.map((transition, index) => (
                 <li key={index} className="ap-timeline__item">
@@ -776,6 +811,163 @@ export function DecisionLedgerPage() {
           </div>
         ) : null}
       </Panel>
+    </div>
+  );
+}
+
+/** The governed next step offered for each state, in lifecycle order. */
+const NEXT_STEP: Partial<Record<DecisionState, { target: DecisionState; label: string }>> =
+  {
+    draft: { target: "evidence_ready", label: "Mark evidence ready" },
+    evidence_ready: { target: "under_review", label: "Submit for review" },
+    under_review: { target: "approved", label: "Approve" },
+    approved: { target: "implemented", label: "Mark implemented" },
+    implemented: { target: "monitoring", label: "Start monitoring" },
+    monitoring: { target: "successful", label: "Mark successful" },
+  };
+
+function NewDecisionForm({
+  onCreated,
+}: {
+  onCreated: (decisionId: string) => void;
+}) {
+  const { session } = useAuth();
+  const [title, setTitle] = useState("");
+  // The server binds the owner to the authenticated identity, so the client
+  // must not offer an editable owner: a fabricated one would defeat the
+  // separation-of-duties check at approval.
+  const owner = session?.subject ?? "";
+  const decisionId = sanitizeDatasetId(title);
+
+  const create = useMutation({
+    mutationFn: () => {
+      return createLedgerDecision({
+        decisionId,
+        title,
+        owner,
+        context: "Captured from the executive Decision Ledger.",
+        objective: "grow ebitda",
+        recommendation: title,
+        chosenAlternative: decisionId,
+        justification:
+          "Recorded for governance; attach optimizer and experiment evidence " +
+          "before submitting for review.",
+      }).then((snapshot) => {
+        onCreated(snapshot.decision_id);
+        return snapshot;
+      });
+    },
+  });
+
+  return (
+    <form
+      className="ap-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (title.trim()) create.mutate();
+      }}
+    >
+      <label className="ap-field">
+        <span>Decision title</span>
+        <input
+          className="ap-input"
+          value={title}
+          placeholder="Raise contracted pricing 3%"
+          onChange={(event) => setTitle(event.target.value)}
+        />
+      </label>
+      <p className="ap-note">
+        Owned by <strong>{owner || "your identity"}</strong>
+        {title.trim() ? (
+          <>
+            {" "}
+            · id <code>{decisionId}</code>
+          </>
+        ) : null}
+      </p>
+      <button
+        type="submit"
+        className="ap-button ap-button--primary"
+        disabled={!title.trim() || create.isPending}
+      >
+        {create.isPending ? "Creating…" : "Create draft"}
+      </button>
+      {create.isError ? (
+        <span className="ap-note">{errorDetail(create.error)}</span>
+      ) : null}
+    </form>
+  );
+}
+
+function GovernedActions({
+  snapshot,
+  onDone,
+}: {
+  snapshot: DecisionSnapshot;
+  onDone: () => void;
+}) {
+  const { can, session } = useAuth();
+  const step: { target: DecisionState; label: string } | undefined =
+    NEXT_STEP[snapshot.state];
+  const needsApproval = snapshot.state === "under_review";
+  // Approving is an approver/admin action; advancing the lifecycle is an
+  // analyst/admin action. The server re-checks both.
+  const permitted = needsApproval
+    ? can("approver", "admin")
+    : can("analyst", "admin");
+
+  const advance = useMutation({
+    mutationFn: () => {
+      if (!step) throw new Error("no transition is available");
+      return transitionLedgerDecision(snapshot.decision_id, {
+        expectedVersion: snapshot.version,
+        target: step.target,
+        approvedContentDigest: needsApproval
+          ? snapshot.content_digest
+          : undefined,
+      });
+    },
+    onSuccess: onDone,
+  });
+
+  if (!step) {
+    return (
+      <p className="ap-note">
+        This decision has reached a terminal state; no further transition is
+        possible.
+      </p>
+    );
+  }
+
+  if (!permitted) {
+    return (
+      <p className="ap-note">
+        Your role cannot {needsApproval ? "approve" : "advance"} this decision.
+      </p>
+    );
+  }
+
+  return (
+    <div className="ap-govern">
+      <button
+        type="button"
+        className="ap-button ap-button--primary"
+        onClick={() => advance.mutate()}
+        disabled={advance.isPending}
+      >
+        {advance.isPending ? "Recording…" : step.label}
+      </button>
+      {needsApproval ? (
+        <p className="ap-note">
+          Approving as <strong>{session?.subject ?? "your identity"}</strong>{" "}
+          signs content digest{" "}
+          <code>{snapshot.content_digest.slice(0, 12)}…</code>. The server binds
+          the approver to your session and rejects the owner as approver.
+        </p>
+      ) : null}
+      {advance.isError ? (
+        <p className="ap-note ap-note--risk">{errorDetail(advance.error)}</p>
+      ) : null}
     </div>
   );
 }
@@ -862,7 +1054,150 @@ export function MonitoringCenterPage() {
         ) : null}
         {report ? <MonitoringReportView report={report} /> : null}
       </Panel>
+
+      {decisionId.trim() ? (
+        <Panel
+          title="Record a realised outcome"
+          description="Compare what actually happened against the prediction that justified the decision."
+        >
+          <RecordOutcomeForm
+            decisionId={decisionId.trim()}
+            onRecorded={(recorded) => {
+              setReport(recorded);
+              setNotFound(false);
+            }}
+          />
+        </Panel>
+      ) : null}
     </div>
+  );
+}
+
+function RecordOutcomeForm({
+  decisionId,
+  onRecorded,
+}: {
+  decisionId: string;
+  onRecorded: (report: MonitoringReport) => void;
+}) {
+  const { can } = useAuth();
+  const [metricName, setMetricName] = useState("ebitda");
+  const [direction, setDirection] = useState<"higher" | "lower">("higher");
+  const [expectedMean, setExpectedMean] = useState("24000000");
+  const [lower, setLower] = useState("20000000");
+  const [upper, setUpper] = useState("28000000");
+  const [realizedValue, setRealizedValue] = useState("21500000");
+
+  // Number("") is 0, so an empty field would silently submit a real zero.
+  const numbers = [expectedMean, lower, upper, realizedValue];
+  const numbersValid = numbers.every(
+    (value) => value.trim() !== "" && Number.isFinite(Number(value)),
+  );
+  const intervalValid =
+    !numbersValid || Number(lower) <= Number(upper);
+  const complete = Boolean(metricName.trim()) && numbersValid && intervalValid;
+
+  const record = useMutation({
+    mutationFn: () =>
+      recordOutcomes(decisionId, {
+        metricName,
+        improvementDirection: direction,
+        expectedMean: Number(expectedMean),
+        lower: Number(lower),
+        upper: Number(upper),
+        realizedValue: Number(realizedValue),
+        asOf: new Date().toISOString().slice(0, 10),
+      }),
+    onSuccess: onRecorded,
+  });
+
+  if (!can("analyst", "admin")) {
+    return (
+      <p className="ap-note">Your role cannot record outcomes.</p>
+    );
+  }
+
+  return (
+    <form
+      className="ap-form ap-form--grid"
+      onSubmit={(event) => {
+        event.preventDefault();
+        record.mutate();
+      }}
+    >
+      <label className="ap-field">
+        <span>KPI</span>
+        <input
+          className="ap-input"
+          value={metricName}
+          onChange={(event) => setMetricName(event.target.value)}
+        />
+      </label>
+      <label className="ap-field">
+        <span>Better when</span>
+        <select
+          className="ap-input"
+          value={direction}
+          onChange={(event) =>
+            setDirection(event.target.value === "lower" ? "lower" : "higher")
+          }
+        >
+          <option value="higher">Higher is better</option>
+          <option value="lower">Lower is better</option>
+        </select>
+      </label>
+      <label className="ap-field">
+        <span>Expected mean</span>
+        <input
+          className="ap-input"
+          type="number"
+          value={expectedMean}
+          onChange={(event) => setExpectedMean(event.target.value)}
+        />
+      </label>
+      <label className="ap-field">
+        <span>Interval lower</span>
+        <input
+          className="ap-input"
+          type="number"
+          value={lower}
+          onChange={(event) => setLower(event.target.value)}
+        />
+      </label>
+      <label className="ap-field">
+        <span>Interval upper</span>
+        <input
+          className="ap-input"
+          type="number"
+          value={upper}
+          onChange={(event) => setUpper(event.target.value)}
+        />
+      </label>
+      <label className="ap-field">
+        <span>Realised value</span>
+        <input
+          className="ap-input"
+          type="number"
+          value={realizedValue}
+          onChange={(event) => setRealizedValue(event.target.value)}
+        />
+      </label>
+      <button
+        type="submit"
+        className="ap-button ap-button--primary"
+        disabled={record.isPending || !complete}
+      >
+        {record.isPending ? "Recording…" : "Record outcome"}
+      </button>
+      {!intervalValid ? (
+        <p className="ap-note ap-note--risk">
+          The interval lower bound must not exceed the upper bound.
+        </p>
+      ) : null}
+      {record.isError ? (
+        <p className="ap-note ap-note--risk">{errorDetail(record.error)}</p>
+      ) : null}
+    </form>
   );
 }
 
@@ -877,6 +1212,17 @@ function MonitoringReportView({ report }: { report: MonitoringReport }) {
           <Badge tone="risk">Recalibration required</Badge>
         ) : null}
       </div>
+      {report.drift.recalibration_required ? (
+        <div className="ap-cta">
+          <span>
+            Drift has passed the recalibration threshold — refit the twin on
+            recent history before relying on this decision again.
+          </span>
+          <Link className="ap-button ap-button--primary" href="/calibration">
+            Recalibrate
+          </Link>
+        </div>
+      ) : null}
       <div className="ap-meters">
         <Meter
           label="Result drift"

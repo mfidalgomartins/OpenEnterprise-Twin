@@ -183,6 +183,7 @@ export interface DecisionSnapshot {
   version: number;
   owner: string;
   content: Record<string, unknown>;
+  content_digest: string;
   transitions: DecisionTransitionRecord[];
   approvals: unknown[];
   created_at: string;

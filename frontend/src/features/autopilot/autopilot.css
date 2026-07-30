@@ -593,3 +593,49 @@
 .ap-alert--info {
   border-left-color: var(--color-decision);
 }
+
+.ap-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface);
+  align-items: flex-start;
+}
+
+.ap-form--grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  align-items: end;
+}
+
+.ap-govern {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface);
+}
+
+.ap-govern .ap-note {
+  flex-basis: 100%;
+}
+
+.ap-note--risk {
+  color: var(--color-risk);
+}
+
+.ap-cta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--color-warning);
+  background: oklch(0.98 0.02 70);
+  border-radius: var(--radius-control);
+}

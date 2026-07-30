@@ -4,6 +4,24 @@ All notable changes to OpenEnterprise Twin are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-07-26
+
+### Added
+
+- **Governed decision actions in the Decision Ledger UI.** An analyst can now
+  create a decision draft and advance it through the lifecycle, and an approver
+  can approve a decision under review, directly from the executive frontend.
+  Approval signs the exact `content_digest` the API serves, and separation-of-
+  duties or optimistic-concurrency rejections surface as problem details.
+- **Outcome recording and a recalibration CTA in the Monitoring Center.** A
+  realised KPI outcome can be recorded from the UI, and when drift passes the
+  recalibration threshold the report links straight to the Calibration Studio.
+- `content_digest` is exposed on the decision snapshot response, so no client
+  ever recomputes the digest an approver signs.
+
+Together these close the governed loop inside the product: calibrate, optimise,
+approve, implement, monitor and recalibrate without leaving the UI.
+
 ## [0.6.0] - 2026-07-26
 
 ### Added
@@ -146,6 +164,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 [0.4.0]: https://github.com/mfidalgomartins/OpenEnterprise-Twin/releases/tag/v0.4.0
 [0.5.0]: https://github.com/mfidalgomartins/OpenEnterprise-Twin/releases/tag/v0.5.0
+[0.6.1]: https://github.com/mfidalgomartins/OpenEnterprise-Twin/releases/tag/v0.6.1
 [0.6.0]: https://github.com/mfidalgomartins/OpenEnterprise-Twin/releases/tag/v0.6.0
 [0.3.2]: https://github.com/mfidalgomartins/OpenEnterprise-Twin/releases/tag/v0.3.2
 [0.3.1]: https://github.com/mfidalgomartins/OpenEnterprise-Twin/releases/tag/v0.3.1

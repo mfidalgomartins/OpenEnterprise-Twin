@@ -444,6 +444,215 @@ describe("decision ledger error state", () => {
   });
 });
 
+describe("decision ledger governance", () => {
+  const snapshot = {
+    decision_id: "dec-1",
+    state: "under_review",
+    version: 3,
+    owner: "cfo",
+    content: { title: "Raise pricing" },
+    content_digest: "c".repeat(64),
+    transitions: [
+      {
+        from_state: null,
+        to_state: "draft",
+        actor: "cfo",
+        occurred_at: "2026-07-23T00:00:00Z",
+        note: null,
+      },
+    ],
+    approvals: [],
+    created_at: "2026-07-23T00:00:00Z",
+    updated_at: "2026-07-23T00:00:00Z",
+  };
+
+  it("approves a decision under review with the served content digest", async () => {
+    const calls: { url: string; body: unknown }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input, init) => {
+        const url = String(input);
+        if (init?.method === "POST") {
+          calls.push({ url, body: JSON.parse(String(init.body)) });
+          return Promise.resolve(
+            jsonResponse({ ...snapshot, state: "approved", version: 4 }),
+          );
+        }
+        if (url.includes("/ledger/decisions/dec-1")) {
+          return Promise.resolve(jsonResponse(snapshot));
+        }
+        if (url.includes("/ledger/decisions")) {
+          return Promise.resolve(
+            jsonResponse([
+              {
+                decision_id: "dec-1",
+                title: "Raise pricing",
+                owner: "cfo",
+                state: "under_review",
+                version: 3,
+                created_at: "2026-07-23T00:00:00Z",
+                updated_at: "2026-07-23T00:00:00Z",
+              },
+            ]),
+          );
+        }
+        return Promise.reject(new Error(`Unexpected request: ${url}`));
+      }),
+    );
+
+    const user = userEvent.setup();
+    renderWithClient(<DecisionLedgerPage />);
+    await user.click(await screen.findByRole("button", { name: /raise pricing/i }));
+    await user.click(await screen.findByRole("button", { name: /^approve$/i }));
+
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    const body = calls[0].body as Record<string, unknown>;
+    expect(body.target).toBe("approved");
+    expect(body.expected_version).toBe(3);
+    const approval = body.approval as Record<string, unknown>;
+    expect(approval.approved_content_digest).toBe("c".repeat(64));
+    // The approver identity is bound server-side, never sent by the client.
+    expect(body.actor).toBeUndefined();
+    expect(approval.approver).toBeUndefined();
+  });
+
+  it("surfaces a separation-of-duties rejection", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input, init) => {
+        const url = String(input);
+        if (init?.method === "POST") {
+          return Promise.resolve(
+            jsonResponse(
+              {
+                type: "about:blank",
+                title: "Rejected",
+                status: 422,
+                code: "domain_validation",
+                detail:
+                  "separation of duties requires a different approver than the owner",
+                trace_id: "t1",
+                violations: [],
+              },
+              422,
+            ),
+          );
+        }
+        if (url.includes("/ledger/decisions/dec-1")) {
+          return Promise.resolve(jsonResponse(snapshot));
+        }
+        return Promise.resolve(
+          jsonResponse([
+            {
+              decision_id: "dec-1",
+              title: "Raise pricing",
+              owner: "cfo",
+              state: "under_review",
+              version: 3,
+              created_at: "2026-07-23T00:00:00Z",
+              updated_at: "2026-07-23T00:00:00Z",
+            },
+          ]),
+        );
+      }),
+    );
+
+    const user = userEvent.setup();
+    renderWithClient(<DecisionLedgerPage />);
+    await user.click(await screen.findByRole("button", { name: /raise pricing/i }));
+    await user.click(await screen.findByRole("button", { name: /^approve$/i }));
+    expect(
+      await screen.findByText(
+        /separation of duties requires a different approver/i,
+      ),
+    ).toBeVisible();
+  });
+});
+
+describe("outcome recording safeguards", () => {
+  function stubOutcomes(calls: { body: unknown }[]) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input, init) => {
+        const url = String(input);
+        if (init?.method === "POST" && url.includes("/outcomes")) {
+          calls.push({ body: JSON.parse(String(init.body)) });
+          return Promise.resolve(
+            jsonResponse(
+              {
+                decision_id: "dec-1",
+                kpis: [],
+                drift: {
+                  data_drift: 0,
+                  parameter_drift: 0,
+                  result_drift: 0,
+                  overall_severity: 0,
+                  recalibration_required: false,
+                  detail: "stable",
+                },
+                alerts: [],
+                recommended_level: "within_expectation",
+              },
+              201,
+            ),
+          );
+        }
+        return Promise.reject(new Error(`Unexpected request: ${url}`));
+      }),
+    );
+  }
+
+  it("sends the chosen improvement direction for a lower-is-better KPI", async () => {
+    const calls: { body: unknown }[] = [];
+    stubOutcomes(calls);
+    const user = userEvent.setup();
+    renderWithClient(<MonitoringCenterPage />);
+
+    await user.type(screen.getByPlaceholderText(/northstar-pricing/i), "dec-1");
+    await user.selectOptions(
+      await screen.findByLabelText(/better when/i),
+      "lower",
+    );
+    await user.click(screen.getByRole("button", { name: /record outcome/i }));
+
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    const body = calls[0].body as { predictions: { improvement_direction: string }[] };
+    expect(body.predictions[0].improvement_direction).toBe("lower");
+  });
+
+  it("refuses to submit a blank numeric field as zero", async () => {
+    const calls: { body: unknown }[] = [];
+    stubOutcomes(calls);
+    const user = userEvent.setup();
+    renderWithClient(<MonitoringCenterPage />);
+
+    await user.type(screen.getByPlaceholderText(/northstar-pricing/i), "dec-1");
+    await user.clear(await screen.findByLabelText(/realised value/i));
+
+    expect(
+      screen.getByRole("button", { name: /record outcome/i }),
+    ).toBeDisabled();
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("new decision ownership", () => {
+  it("shows the identity-bound owner instead of an editable field", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(() => Promise.resolve(jsonResponse([]))),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<DecisionLedgerPage />);
+    await user.click(
+      await screen.findByRole("button", { name: /new decision/i }),
+    );
+    // The owner is derived from the session, never typed by the client.
+    expect(screen.queryByLabelText(/^owner$/i)).toBeNull();
+    expect(await screen.findByText(/owned by/i)).toBeVisible();
+  });
+});
+
 describe("monitoring center", () => {
   it("prompts for a decision id", () => {
     renderWithClient(<MonitoringCenterPage />);
