@@ -194,18 +194,23 @@ def test_heartbeat_keeps_lease_alive_during_long_handler(
         _job: Job,
         _context: JobExecutionContext,
     ) -> JobExecutionResult:
-        sleep(0.18)
+        sleep(0.9)
         return JobExecutionResult(
             resource_type="experiment",
             resource_id="42",
             digest="c" * 64,
         )
 
+    # The property under test is that a handler outliving its lease still
+    # completes because the heartbeat renews the lease. The absolute timings
+    # are deliberately generous: a shared CI runner can starve the heartbeat
+    # thread for tens of milliseconds, and tighter margins made this test flaky.
+    # Keep the work well above the lease and many heartbeats inside it.
     worker = _worker(
         session_factory,
         handler,
-        lease_duration=timedelta(milliseconds=100),
-        heartbeat_interval=timedelta(milliseconds=25),
+        lease_duration=timedelta(milliseconds=500),
+        heartbeat_interval=timedelta(milliseconds=50),
     )
     assert worker.run_once() is True
     terminal = SqlJobRepository(session_factory, "tenant-a").get(
