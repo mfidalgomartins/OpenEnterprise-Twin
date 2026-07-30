@@ -831,12 +831,16 @@ function NewDecisionForm({
 }: {
   onCreated: (decisionId: string) => void;
 }) {
+  const { session } = useAuth();
   const [title, setTitle] = useState("");
-  const [owner, setOwner] = useState("cfo");
+  // The server binds the owner to the authenticated identity, so the client
+  // must not offer an editable owner: a fabricated one would defeat the
+  // separation-of-duties check at approval.
+  const owner = session?.subject ?? "";
+  const decisionId = sanitizeDatasetId(title);
 
   const create = useMutation({
     mutationFn: () => {
-      const decisionId = sanitizeDatasetId(title);
       return createLedgerDecision({
         decisionId,
         title,
@@ -872,14 +876,15 @@ function NewDecisionForm({
           onChange={(event) => setTitle(event.target.value)}
         />
       </label>
-      <label className="ap-field">
-        <span>Owner</span>
-        <input
-          className="ap-input"
-          value={owner}
-          onChange={(event) => setOwner(event.target.value)}
-        />
-      </label>
+      <p className="ap-note">
+        Owned by <strong>{owner || "your identity"}</strong>
+        {title.trim() ? (
+          <>
+            {" "}
+            · id <code>{decisionId}</code>
+          </>
+        ) : null}
+      </p>
       <button
         type="submit"
         className="ap-button ap-button--primary"
@@ -1077,15 +1082,26 @@ function RecordOutcomeForm({
 }) {
   const { can } = useAuth();
   const [metricName, setMetricName] = useState("ebitda");
+  const [direction, setDirection] = useState<"higher" | "lower">("higher");
   const [expectedMean, setExpectedMean] = useState("24000000");
   const [lower, setLower] = useState("20000000");
   const [upper, setUpper] = useState("28000000");
   const [realizedValue, setRealizedValue] = useState("21500000");
 
+  // Number("") is 0, so an empty field would silently submit a real zero.
+  const numbers = [expectedMean, lower, upper, realizedValue];
+  const numbersValid = numbers.every(
+    (value) => value.trim() !== "" && Number.isFinite(Number(value)),
+  );
+  const intervalValid =
+    !numbersValid || Number(lower) <= Number(upper);
+  const complete = Boolean(metricName.trim()) && numbersValid && intervalValid;
+
   const record = useMutation({
     mutationFn: () =>
       recordOutcomes(decisionId, {
         metricName,
+        improvementDirection: direction,
         expectedMean: Number(expectedMean),
         lower: Number(lower),
         upper: Number(upper),
@@ -1116,6 +1132,19 @@ function RecordOutcomeForm({
           value={metricName}
           onChange={(event) => setMetricName(event.target.value)}
         />
+      </label>
+      <label className="ap-field">
+        <span>Better when</span>
+        <select
+          className="ap-input"
+          value={direction}
+          onChange={(event) =>
+            setDirection(event.target.value === "lower" ? "lower" : "higher")
+          }
+        >
+          <option value="higher">Higher is better</option>
+          <option value="lower">Lower is better</option>
+        </select>
       </label>
       <label className="ap-field">
         <span>Expected mean</span>
@@ -1156,10 +1185,15 @@ function RecordOutcomeForm({
       <button
         type="submit"
         className="ap-button ap-button--primary"
-        disabled={record.isPending || !metricName.trim()}
+        disabled={record.isPending || !complete}
       >
         {record.isPending ? "Recording…" : "Record outcome"}
       </button>
+      {!intervalValid ? (
+        <p className="ap-note ap-note--risk">
+          The interval lower bound must not exceed the upper bound.
+        </p>
+      ) : null}
       {record.isError ? (
         <p className="ap-note ap-note--risk">{errorDetail(record.error)}</p>
       ) : null}

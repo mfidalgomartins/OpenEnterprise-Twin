@@ -569,6 +569,90 @@ describe("decision ledger governance", () => {
   });
 });
 
+describe("outcome recording safeguards", () => {
+  function stubOutcomes(calls: { body: unknown }[]) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input, init) => {
+        const url = String(input);
+        if (init?.method === "POST" && url.includes("/outcomes")) {
+          calls.push({ body: JSON.parse(String(init.body)) });
+          return Promise.resolve(
+            jsonResponse(
+              {
+                decision_id: "dec-1",
+                kpis: [],
+                drift: {
+                  data_drift: 0,
+                  parameter_drift: 0,
+                  result_drift: 0,
+                  overall_severity: 0,
+                  recalibration_required: false,
+                  detail: "stable",
+                },
+                alerts: [],
+                recommended_level: "within_expectation",
+              },
+              201,
+            ),
+          );
+        }
+        return Promise.reject(new Error(`Unexpected request: ${url}`));
+      }),
+    );
+  }
+
+  it("sends the chosen improvement direction for a lower-is-better KPI", async () => {
+    const calls: { body: unknown }[] = [];
+    stubOutcomes(calls);
+    const user = userEvent.setup();
+    renderWithClient(<MonitoringCenterPage />);
+
+    await user.type(screen.getByPlaceholderText(/northstar-pricing/i), "dec-1");
+    await user.selectOptions(
+      await screen.findByLabelText(/better when/i),
+      "lower",
+    );
+    await user.click(screen.getByRole("button", { name: /record outcome/i }));
+
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    const body = calls[0].body as { predictions: { improvement_direction: string }[] };
+    expect(body.predictions[0].improvement_direction).toBe("lower");
+  });
+
+  it("refuses to submit a blank numeric field as zero", async () => {
+    const calls: { body: unknown }[] = [];
+    stubOutcomes(calls);
+    const user = userEvent.setup();
+    renderWithClient(<MonitoringCenterPage />);
+
+    await user.type(screen.getByPlaceholderText(/northstar-pricing/i), "dec-1");
+    await user.clear(await screen.findByLabelText(/realised value/i));
+
+    expect(
+      screen.getByRole("button", { name: /record outcome/i }),
+    ).toBeDisabled();
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("new decision ownership", () => {
+  it("shows the identity-bound owner instead of an editable field", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(() => Promise.resolve(jsonResponse([]))),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<DecisionLedgerPage />);
+    await user.click(
+      await screen.findByRole("button", { name: /new decision/i }),
+    );
+    // The owner is derived from the session, never typed by the client.
+    expect(screen.queryByLabelText(/^owner$/i)).toBeNull();
+    expect(await screen.findByText(/owned by/i)).toBeVisible();
+  });
+});
+
 describe("monitoring center", () => {
   it("prompts for a decision id", () => {
     renderWithClient(<MonitoringCenterPage />);

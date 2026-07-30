@@ -274,6 +274,8 @@ export interface OutcomeInput {
   upper: number;
   realizedValue: number;
   asOf: string;
+  /** Whether a higher or a lower realised value is the better outcome. */
+  improvementDirection: "higher" | "lower";
 }
 
 export function recordOutcomes(decisionId: string, input: OutcomeInput) {
@@ -288,7 +290,7 @@ export function recordOutcomes(decisionId: string, input: OutcomeInput) {
             expected_mean: input.expectedMean,
             lower: input.lower,
             upper: input.upper,
-            improvement_direction: "higher",
+            improvement_direction: input.improvementDirection,
           },
         ],
         outcomes: [
