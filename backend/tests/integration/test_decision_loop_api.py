@@ -315,6 +315,8 @@ def test_decision_lifecycle_and_optimistic_conflict(tmp_path: Path) -> None:
         )
         snapshot = analyst.get("/api/v1/ledger/decisions/dec-1").json()
         digest = DecisionContent.model_validate(snapshot["content"]).content_digest()
+        # The API serves the digest an approver signs, so no client recomputes it.
+        assert snapshot["content_digest"] == digest
 
     with _client(tmp_path, subject="ceo", roles=("approver",)) as approver:
         approved = approver.post(

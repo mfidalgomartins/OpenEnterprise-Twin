@@ -472,6 +472,8 @@ class DecisionSnapshotResponse(LoopModel):
     version: int
     owner: str
     content: DecisionContent
+    #: The digest an approver signs; exposed so clients never recompute it.
+    content_digest: str
     transitions: tuple[DecisionTransition, ...]
     approvals: tuple[ApprovalRecord, ...]
     created_at: datetime
@@ -662,6 +664,7 @@ def _snapshot_response(snapshot: DecisionSnapshot) -> DecisionSnapshotResponse:
         version=snapshot.version,
         owner=snapshot.owner,
         content=snapshot.content,
+        content_digest=snapshot.content.content_digest(),
         transitions=snapshot.transitions,
         approvals=snapshot.approvals,
         created_at=snapshot.created_at,

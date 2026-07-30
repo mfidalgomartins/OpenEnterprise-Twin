@@ -9,6 +9,7 @@ import type {
   DatasetIngestResponse,
   DecisionListItem,
   DecisionSnapshot,
+  DecisionState,
   MonitoringReport,
 } from "./types";
 
@@ -199,6 +200,107 @@ export function compareAdaptivePolicy(input: AdaptiveInput) {
 
 export function listLedgerDecisions() {
   return apiRequest<DecisionListItem[]>("/api/v1/ledger/decisions");
+}
+
+export interface DecisionDraft {
+  decisionId: string;
+  title: string;
+  owner: string;
+  context: string;
+  objective: string;
+  recommendation: string;
+  chosenAlternative: string;
+  justification: string;
+}
+
+export function createLedgerDecision(draft: DecisionDraft) {
+  return apiRequest<DecisionSnapshot>("/api/v1/ledger/decisions", {
+    method: "POST",
+    body: {
+      decision_id: draft.decisionId,
+      content: {
+        title: draft.title,
+        owner: draft.owner,
+        context: draft.context,
+        objectives: [draft.objective],
+        company_model_version: "0.2.0",
+        recommendation: draft.recommendation,
+        chosen_alternative: draft.chosenAlternative,
+        justification: draft.justification,
+      },
+    },
+  });
+}
+
+export interface TransitionInput {
+  expectedVersion: number;
+  target: DecisionState;
+  note?: string;
+  /** Required only for the review → approved transition. */
+  approvedContentDigest?: string;
+}
+
+export function transitionLedgerDecision(
+  decisionId: string,
+  input: TransitionInput,
+) {
+  // The approver identity is bound to the authenticated session server-side;
+  // the client only signs the digest it was served.
+  const approval = input.approvedContentDigest
+    ? {
+        decision: "approve",
+        occurred_at: new Date().toISOString(),
+        approved_content_digest: input.approvedContentDigest,
+      }
+    : undefined;
+  return apiRequest<DecisionSnapshot>(
+    `/api/v1/ledger/decisions/${encodeURIComponent(decisionId)}/transitions`,
+    {
+      method: "POST",
+      body: {
+        expected_version: input.expectedVersion,
+        target: input.target,
+        note: input.note ?? null,
+        approval,
+      },
+    },
+  );
+}
+
+export interface OutcomeInput {
+  metricName: string;
+  expectedMean: number;
+  lower: number;
+  upper: number;
+  realizedValue: number;
+  asOf: string;
+}
+
+export function recordOutcomes(decisionId: string, input: OutcomeInput) {
+  return apiRequest<MonitoringReport>(
+    `/api/v1/ledger/decisions/${encodeURIComponent(decisionId)}/outcomes`,
+    {
+      method: "POST",
+      body: {
+        predictions: [
+          {
+            metric_name: input.metricName,
+            expected_mean: input.expectedMean,
+            lower: input.lower,
+            upper: input.upper,
+            improvement_direction: "higher",
+          },
+        ],
+        outcomes: [
+          {
+            metric_name: input.metricName,
+            as_of: input.asOf,
+            realized_value: input.realizedValue,
+          },
+        ],
+      },
+    },
+  );
 }
 
 export function getLedgerDecision(decisionId: string) {
